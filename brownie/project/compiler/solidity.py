@@ -257,15 +257,19 @@ def _get_unique_build_json(
     without_metadata = _remove_metadata(output_evm["deployedBytecode"]["object"])
     instruction_count = len(without_metadata) // 2
 
-    pc_map, statement_map, branch_map = _generate_coverage_data(
-        output_evm["deployedBytecode"]["sourceMap"],
-        output_evm["deployedBytecode"]["opcodes"],
-        contract_node,
-        stmt_nodes,
-        branch_nodes,
-        has_fallback,
-        instruction_count,
-    )
+    try:
+        pc_map, statement_map, branch_map = _generate_coverage_data(
+            output_evm["deployedBytecode"]["sourceMap"],
+            output_evm["deployedBytecode"]["opcodes"],
+            contract_node,
+            stmt_nodes,
+            branch_nodes,
+            has_fallback,
+            instruction_count,
+        )
+    except IndexError:
+        pc_map, statement_map, branch_map = {}, {}, {}
+
 
     dependencies = []
     for node in [i for i in contract_node.dependencies if i.nodeType == "ContractDefinition"]:
