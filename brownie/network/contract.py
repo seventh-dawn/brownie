@@ -435,14 +435,14 @@ class ContractContainer(_ContractBase):
             "module": "contract",
             "action": "verifysourcecode",
             "contractaddress": address,
-            "sourceCode": io.StringIO(json.dumps(self._flattener.standard_input_json)),
+            "sourceCode": io.StringIO(json.dumps(flatten_libraries_for_file(self._flattener.standard_input_json))),
             "codeformat": "solidity-standard-json-input",
             "contractname": f"{self._flattener.contract_file}:{self._flattener.contract_name}",
             "compilerversion": f"v{contract_info['compiler_version']}",
             "optimizationUsed": 1 if contract_info["optimizer_enabled"] else 0,
             "runs": contract_info["optimizer_runs"],
             "constructorArguements": constructor_arguments,
-            "licenseType": license_code,
+            "licenseType": license_code
         }
         response = requests.post(url, data=payload_verification, headers=REQUEST_HEADERS)
         if response.status_code != 200:
@@ -480,7 +480,6 @@ class ContractContainer(_ContractBase):
                     print(f"Verification complete. Result: {color(col)}{data['result']}{color}")
                 return data["message"] == "OK"
             time.sleep(10)
-
     def _slice_source(self, source: str, offset: list) -> str:
         """Slice the source of the contract, preserving any comments above the first line."""
         offset_start = offset[0]
@@ -506,6 +505,35 @@ class ContractContainer(_ContractBase):
         offset_start = max(0, offset_start)
         return source[offset_start : offset[1]].strip()
 
+def get_stripped_library(name, sources):
+    library_source = sources[name]['content'].split('\n')
+    lines = []
+    for line in library_source:
+        if 'pragma' in line:
+            continue
+        if 'license' in line.lower():
+            continue
+        lines.append(line)
+    return '\n'.join(lines)
+
+def flatten_libraries_for_file(data):
+    sources = data['sources']
+    libraries = data['settings']['libraries']
+    files_requiring_libraries = list(libraries.keys())
+    file_to_flatten = files_requiring_libraries[0]
+    libraries_files = [name.replace('.sol', '') + '.sol' for name in libraries[file_to_flatten]]
+    processed_lines = []
+    contract_source = sources[file_to_flatten]['content'].split('\n')
+    for _, line in enumerate(contract_source):
+        if 'import' in line and any(file_name in line for file_name in libraries_files):
+            file_name = [name for name in libraries_files if name in line][0]
+            line = get_stripped_library(file_name, sources)
+        processed_lines.append(line)
+    new_source = '\n'.join(processed_lines)
+    data['sources'][file_to_flatten] = {'content': new_source}
+    for library_name in libraries_files:
+        data['sources'].pop(library_name)
+    return data
 
 class ContractConstructor:
     _dir_color = "bright magenta"

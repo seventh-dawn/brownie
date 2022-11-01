@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 import json
+import os
 import sys
 import threading
 import time
@@ -46,7 +47,12 @@ rpc = Rpc()
 eth_account.Account.enable_unaudited_hdwallet_features()
 _marker = deque("-/|\\-/|\\")
 
-
+def is_test_context():
+    return "PYTEST_CURRENT_TEST" in os.environ
+def is_auto_publish():
+    return os.environ.get('AUTO_PUBLISH', None) == 'True'
+def is_mainnet():
+    return 'main' in CONFIG.active_network['name'].lower()
 class Accounts(metaclass=_Singleton):
     """
     List-like container that holds all available `Account` objects.
@@ -566,6 +572,8 @@ class _PrivateKeyAccount(PublicKeyAccount):
             return receipt
 
         add_thread.join()
+        if is_auto_publish():
+            publish_source = (not is_test_context()) and is_mainnet()
         try:
             deployed_contract = contract.at(receipt.contract_address)
             if publish_source:
