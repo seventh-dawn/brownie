@@ -110,13 +110,20 @@ class _ProjectBase:
             )
         finally:
             os.chdir(cwd)
-
+        is_alternative_compilation = os.environ.get('IS_ALTERNATIVE_COMPILATION', 'False') == 'True'
+        Path(self._build_path, 'contracts/_interfaces').mkdir(exist_ok=True)
         for alias, data in build_json.items():
-            if self._build_path is not None and not data["sourcePath"].startswith("interface"):
+            if self._build_path is not None:
+                is_contract = not data["sourcePath"].startswith("interface")
                 # interfaces should generate artifact in /build/interfaces/ not /build/contracts/
                 if alias == data["contractName"]:
                     # if the alias == contract name, this is a part of the core project
-                    path = self._build_path.joinpath(f"contracts/{alias}.json")
+                    if is_contract:
+                        path = self._build_path.joinpath(f"contracts/{alias}.json")
+                    else:
+                        if not is_alternative_compilation:
+                            continue
+                        path = self._build_path.joinpath(f"contracts/_interfaces/{alias}.json")
                 else:
                     # otherwise, this is an artifact from an external dependency
                     path = self._build_path.joinpath(f"contracts/dependencies/{alias}.json")
@@ -358,6 +365,7 @@ class Project(_ProjectBase):
                     build_json = json.load(fp)
                 self._build._add_contract(build_json, contract_alias)
             else:
+                continue
                 path.unlink()
 
     def _load_deployments(self) -> None:
