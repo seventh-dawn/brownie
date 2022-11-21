@@ -31,7 +31,14 @@ STANDARD_JSON: Dict = {
     "settings": {
         "outputSelection": {
             "*": {
-                "*": ["abi", "devdoc", "evm.bytecode", "evm.deployedBytecode", "userdoc"],
+                "*": [
+                    "abi",
+                    "devdoc",
+                    "evm.bytecode",
+                    "evm.deployedBytecode",
+                    "userdoc",
+                    "storageLayout",
+                ],
                 "": ["ast"],
             }
         },
@@ -54,6 +61,8 @@ def compile_and_format(
     remappings: Optional[list] = None,
     optimizer: Optional[Dict] = None,
     viaIR: Optional[bool] = None,
+    output_selection: Optional[Dict] = None,
+    only_output: bool = False,
 ) -> Dict:
     """Compiles contracts and returns build data.
 
@@ -84,6 +93,7 @@ def compile_and_format(
         raise UnsupportedLanguage("Interface suffixes must be one of ('.sol', '.vy', '.json')")
 
     build_json: Dict = {}
+    all_outputs_json: Dict = {}
     compiler_targets = {}
 
     vyper_sources = {k: v for k, v in contract_sources.items() if Path(k).suffix == ".vy"}
@@ -136,8 +146,16 @@ def compile_and_format(
             viaIR=viaIR,
         )
 
+        if output_selection is not None:
+            input_json["settings"]["outputSelection"] = output_selection
+
         output_json = compile_from_input_json(input_json, silent, allow_paths)
-        build_json.update(generate_build_json(input_json, output_json, compiler_data, silent))
+        all_outputs_json.update(output_json)
+        if not only_output:
+            build_json.update(generate_build_json(input_json, output_json, compiler_data, silent))
+
+    if only_output:
+        return all_outputs_json
 
     return build_json
 
@@ -152,6 +170,7 @@ def generate_input_json(
     remappings: Optional[list] = None,
     optimizer: Optional[Dict] = None,
     viaIR: Optional[bool] = None,
+    get_storage_layout: bool = False,
 ) -> Dict:
     """Formats contracts to the standard solc input json.
 
@@ -190,6 +209,11 @@ def generate_input_json(
         if viaIR is not None:
             input_json["settings"]["viaIR"] = viaIR
     input_json["sources"] = _sources_dict(contract_sources, language)
+
+    if get_storage_layout:
+        output_selection = input_json["settings"]["outputSelection"]
+        output_selection["*"]["*"] += "storageLayout"
+        input_json["settings"]["outputSelection"] = output_selection
 
     if interface_sources:
         if language == "Solidity":

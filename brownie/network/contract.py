@@ -435,14 +435,16 @@ class ContractContainer(_ContractBase):
             "module": "contract",
             "action": "verifysourcecode",
             "contractaddress": address,
-            "sourceCode": io.StringIO(json.dumps(flatten_libraries_for_file(self._flattener.standard_input_json))),
+            "sourceCode": io.StringIO(
+                json.dumps(flatten_libraries_for_file(self._flattener.standard_input_json))
+            ),
             "codeformat": "solidity-standard-json-input",
             "contractname": f"{self._flattener.contract_file}:{self._flattener.contract_name}",
             "compilerversion": f"v{contract_info['compiler_version']}",
             "optimizationUsed": 1 if contract_info["optimizer_enabled"] else 0,
             "runs": contract_info["optimizer_runs"],
             "constructorArguements": constructor_arguments,
-            "licenseType": license_code
+            "licenseType": license_code,
         }
         response = requests.post(url, data=payload_verification, headers=REQUEST_HEADERS)
         if response.status_code != 200:
@@ -480,6 +482,7 @@ class ContractContainer(_ContractBase):
                     print(f"Verification complete. Result: {color(col)}{data['result']}{color}")
                 return data["message"] == "OK"
             time.sleep(10)
+
     def _slice_source(self, source: str, offset: list) -> str:
         """Slice the source of the contract, preserving any comments above the first line."""
         offset_start = offset[0]
@@ -505,35 +508,38 @@ class ContractContainer(_ContractBase):
         offset_start = max(0, offset_start)
         return source[offset_start : offset[1]].strip()
 
+
 def get_stripped_library(name, sources):
-    library_source = sources[name]['content'].split('\n')
+    library_source = sources[name]["content"].split("\n")
     lines = []
     for line in library_source:
-        if 'pragma' in line:
+        if "pragma" in line:
             continue
-        if 'license' in line.lower():
+        if "license" in line.lower():
             continue
         lines.append(line)
-    return '\n'.join(lines)
+    return "\n".join(lines)
+
 
 def flatten_libraries_for_file(data):
-    sources = data['sources']
-    libraries = data['settings']['libraries']
+    sources = data["sources"]
+    libraries = data["settings"]["libraries"]
     files_requiring_libraries = list(libraries.keys())
     file_to_flatten = files_requiring_libraries[0]
-    libraries_files = [name.replace('.sol', '') + '.sol' for name in libraries[file_to_flatten]]
+    libraries_files = [name.replace(".sol", "") + ".sol" for name in libraries[file_to_flatten]]
     processed_lines = []
-    contract_source = sources[file_to_flatten]['content'].split('\n')
+    contract_source = sources[file_to_flatten]["content"].split("\n")
     for _, line in enumerate(contract_source):
-        if 'import' in line and any(file_name in line for file_name in libraries_files):
+        if "import" in line and any(file_name in line for file_name in libraries_files):
             file_name = [name for name in libraries_files if name in line][0]
             line = get_stripped_library(file_name, sources)
         processed_lines.append(line)
-    new_source = '\n'.join(processed_lines)
-    data['sources'][file_to_flatten] = {'content': new_source}
+    new_source = "\n".join(processed_lines)
+    data["sources"][file_to_flatten] = {"content": new_source}
     for library_name in libraries_files:
-        data['sources'].pop(library_name)
+        data["sources"].pop(library_name)
     return data
+
 
 class ContractConstructor:
     _dir_color = "bright magenta"
@@ -985,6 +991,157 @@ class Contract(_DeployedContractBase):
         return self
 
     @classmethod
+    def from_ethpm(
+        cls,
+        name: str,
+        manifest_uri: str,
+        address: Optional[str] = None,
+        owner: Optional[AccountsType] = None,
+        persist: bool = True,
+    ) -> "Contract":
+        """
+        Create a new `Contract` object from an ethPM manifest.
+
+        Arguments
+        ---------
+        name : str
+            Name of the contract.
+        manifest_uri : str
+            erc1319 registry URI where the manifest is located
+        address : str optional
+            Address where the contract is deployed. Only required if the
+            manifest contains more than one deployment with the given name
+            on the active chain.
+        owner : Account, optional
+            Contract owner. If set, transactions without a `from` field
+            will be performed using this account.
+        """
+        manifest = ethpm.get_manifest(manifest_uri)
+
+        if address is None:
+            address_list = ethpm.get_deployment_addresses(manifest, name)
+            if not address_list:
+                raise ContractNotFound(
+                    f"'{manifest['package_name']}' manifest does not contain"
+                    f" a deployment of '{name}' on this chain"
+                )
+            if len(address_list) > 1:
+                raise ValueError(
+                    f"'{manifest['package_name']}' manifest contains more than one "
+                    f"deployment of '{name}' on this chain, you must specify an address:"
+                    f" {', '.join(address_list)}"
+                )
+            address = address_list[0]
+
+        manifest["contract_types"][name]["contract_name"]
+        build = {
+            "abi": manifest["contract_types"][name]["abi"],
+            "contractName": name,
+            "natspec": manifest["contract_types"][name]["natspec"],
+            "type": "contract",
+        }
+
+        self = cls.__new__(cls)
+        _ContractBase.__init__(self, None, build, manifest["sources"])  # type: ignore
+        _DeployedContractBase.__init__(self, address, owner)
+        if persist:
+            _add_deployment(self)
+        return self
+
+    @classmethod
+    def storage_from_explorer(
+        cls,
+        address: str,
+        as_proxy_for: Optional[str] = None,
+        owner: Optional[AccountsType] = None,
+        silent: bool = False,
+        persist: bool = True,
+    ):
+        address = _resolve_address(address)
+        data = _fetch_from_explorer(address, "getsourcecode", silent)
+        is_verified = bool(data["result"][0].get("SourceCode"))
+
+        if is_verified:
+            abi = json.loads(data["result"][0]["ABI"])
+            name = data["result"][0]["ContractName"]
+        else:
+            # if the source is not available, try to fetch only the ABI
+            try:
+                data_abi = _fetch_from_explorer(address, "getabi", True)
+            except ValueError as exc:
+                _unverified_addresses.add(address)
+                raise exc
+            abi = json.loads(data_abi["result"].strip())
+            name = "UnknownContractName"
+            warnings.warn(
+                f"{address}: Was able to fetch the ABI but not the source code. "
+                "Some functionality will not be available.",
+                BrownieCompilerWarning,
+            )
+
+        if as_proxy_for is None:
+            # always check for an EIP1967 proxy - https://eips.ethereum.org/EIPS/eip-1967
+            implementation_eip1967 = web3.eth.get_storage_at(
+                address, int(web3.keccak(text="eip1967.proxy.implementation").hex(), 16) - 1
+            )
+            # always check for an EIP1822 proxy - https://eips.ethereum.org/EIPS/eip-1822
+            implementation_eip1822 = web3.eth.get_storage_at(address, web3.keccak(text="PROXIABLE"))
+            if len(implementation_eip1967) > 0 and int(implementation_eip1967.hex(), 16):
+                as_proxy_for = _resolve_address(implementation_eip1967[-20:])
+            elif len(implementation_eip1822) > 0 and int(implementation_eip1822.hex(), 16):
+                as_proxy_for = _resolve_address(implementation_eip1822[-20:])
+            elif data["result"][0].get("Implementation"):
+                # for other proxy patterns, we only check if etherscan indicates
+                # the contract is a proxy. otherwise we could have a false positive
+                # if there is an `implementation` method on a regular contract.
+                try:
+                    # first try to call `implementation` per EIP897
+                    # https://eips.ethereum.org/EIPS/eip-897
+                    contract = cls.from_abi(name, address, abi)
+                    as_proxy_for = contract.implementation.call()
+                except Exception:
+                    # if that fails, fall back to the address provided by etherscan
+                    as_proxy_for = _resolve_address(data["result"][0]["Implementation"])
+
+        if as_proxy_for == address:
+            as_proxy_for = None
+
+        # if this is a proxy, fetch information for the implementation contract
+        if as_proxy_for is not None:
+            return cls.storage_from_explorer(
+                as_proxy_for,
+                None,
+                owner,
+                silent,
+                persist,
+            )
+
+        if not is_verified:
+            return cls.from_abi(name, address, abi, owner)
+
+        compiler_str = cls.get_compiler_str_from_data(data)
+        version, is_compilable = cls.get_version_infos_from_compiler_str(address, compiler_str)
+
+        if not is_compilable:
+            if not silent:
+                warnings.warn(
+                    f"{address}: target compiler '{compiler_str}' cannot be installed or is not "
+                    "supported by Brownie. Some debugging functionality will not be available.",
+                    BrownieCompilerWarning,
+                )
+            return cls.from_abi(name, address, abi, owner)
+        elif data["result"][0]["OptimizationUsed"] in ("true", "false"):
+            if not silent:
+                warnings.warn(
+                    f"Blockscout explorer API has limited support by Brownie. "  # noqa
+                    "Some debugging functionality will not be available.",
+                    BrownieCompilerWarning,
+                )
+            return cls.from_abi(name, address, abi, owner)
+
+        return cls.get_layout_from_data(data, name, version)
+
+    @classmethod
     def from_explorer(
         cls,
         address: str,
@@ -1066,24 +1223,8 @@ class Contract(_DeployedContractBase):
         if not is_verified:
             return cls.from_abi(name, address, abi, owner)
 
-        compiler_str = data["result"][0]["CompilerVersion"]
-        if compiler_str.startswith("vyper:"):
-            try:
-                version = to_vyper_version(compiler_str[6:])
-                is_compilable = version in get_installable_vyper_versions()
-            except Exception:
-                is_compilable = False
-        else:
-            try:
-                version = cls.get_solc_version(compiler_str, address)
-
-                is_compilable = (
-                    version >= Version("0.4.22")
-                    and version
-                    in solcx.get_installable_solc_versions() + solcx.get_installed_solc_versions()
-                )
-            except Exception:
-                is_compilable = False
+        compiler_str = cls.get_compiler_str_from_data(data)
+        version, is_compilable = cls.get_version_infos_from_compiler_str(address, compiler_str)
 
         if not is_compilable:
             if not silent:
@@ -1102,6 +1243,57 @@ class Contract(_DeployedContractBase):
                 )
             return cls.from_abi(name, address, abi, owner)
 
+        sources, build_json = cls.get_sources_and_build_from_data(data, name, version)
+
+        build_json = build_json[name]
+        if as_proxy_for is not None:
+            build_json.update(abi=abi, natspec=implementation_contract._build.get("natspec"))
+
+        if not _verify_deployed_code(
+            address, build_json["deployedBytecode"], build_json["language"]
+        ):
+            warnings.warn(
+                f"{address}: Locally compiled and on-chain bytecode do not match!",
+                BrownieCompilerWarning,
+            )
+            del build_json["pcMap"]
+
+        self = cls.__new__(cls)
+        _ContractBase.__init__(self, None, build_json, sources)  # type: ignore
+        _DeployedContractBase.__init__(self, address, owner)
+        if persist:
+            _add_deployment(self)
+        return self
+
+    @classmethod
+    def get_compiler_str_from_data(cls, data):
+        compiler_str = data["result"][0]["CompilerVersion"]
+        return compiler_str
+
+    @classmethod
+    def get_version_infos_from_compiler_str(cls, address, compiler_str):
+        if compiler_str.startswith("vyper:"):
+            try:
+                version = to_vyper_version(compiler_str[6:])
+                is_compilable = version in get_installable_vyper_versions()
+            except Exception:
+                is_compilable = False
+        else:
+            try:
+                version = cls.get_solc_version(compiler_str, address)
+
+                is_compilable = (
+                    version >= Version("0.4.22")
+                    and version
+                    in solcx.get_installable_solc_versions() + solcx.get_installed_solc_versions()
+                )
+            except Exception:
+                is_compilable = False
+        return version, is_compilable
+
+    @classmethod
+    def get_sources_and_build_from_data(cls, data, name, version):
+        compiler_str = data["result"][0]["CompilerVersion"]
         optimizer = {
             "enabled": bool(int(data["result"][0]["OptimizationUsed"])),
             "runs": int(data["result"][0]["Runs"]),
@@ -1146,25 +1338,58 @@ class Contract(_DeployedContractBase):
                 evm_version=evm_version,
             )
 
-        build_json = build_json[name]
-        if as_proxy_for is not None:
-            build_json.update(abi=abi, natspec=implementation_contract._build.get("natspec"))
+        return sources, build_json
 
-        if not _verify_deployed_code(
-            address, build_json["deployedBytecode"], build_json["language"]
-        ):
-            warnings.warn(
-                f"{address}: Locally compiled and on-chain bytecode do not match!",
-                BrownieCompilerWarning,
+    @classmethod
+    def get_layout_from_data(cls, data, name, version):
+        compiler_str = data["result"][0]["CompilerVersion"]
+        optimizer = {
+            "enabled": bool(int(data["result"][0]["OptimizationUsed"])),
+            "runs": int(data["result"][0]["Runs"]),
+        }
+        evm_version = data["result"][0].get("EVMVersion", "Default")
+        if evm_version == "Default":
+            evm_version = None
+
+        source_str = "\n".join(data["result"][0]["SourceCode"].splitlines())
+        output_selection = {"*": {"*": ["storageLayout"], "": ["ast"]}}
+        if source_str.startswith("{{"):
+            # source was verified using compiler standard JSON
+            input_json = json.loads(source_str[1:-1])
+            sources = {k: v["content"] for k, v in input_json["sources"].items()}
+            evm_version = input_json["settings"].get("evmVersion", evm_version)
+            remappings = input_json["settings"].get("remappings", [])
+
+            compiler.set_solc_version(str(version))
+            input_json.update(
+                compiler.generate_input_json(
+                    sources, optimizer=optimizer, evm_version=evm_version, remappings=remappings
+                )
             )
-            del build_json["pcMap"]
+            input_json["settings"]["outputSelection"] = output_selection
+            output_json = compiler.compile_from_input_json(input_json)
+            return output_json
+        else:
+            if source_str.startswith("{"):
+                # source was submitted as multiple files
+                sources = {k: v["content"] for k, v in json.loads(source_str).items()}
+            else:
+                # source was submitted as a single file
+                if compiler_str.startswith("vyper"):
+                    path_str = f"{name}.vy"
+                else:
+                    path_str = f"{name}-flattened.sol"
+                sources = {path_str: source_str}
 
-        self = cls.__new__(cls)
-        _ContractBase.__init__(self, None, build_json, sources)  # type: ignore
-        _DeployedContractBase.__init__(self, address, owner)
-        if persist:
-            _add_deployment(self)
-        return self
+            return compiler.compile_and_format(
+                sources,
+                solc_version=str(version),
+                vyper_version=str(version),
+                optimizer=optimizer,
+                evm_version=evm_version,
+                output_selection=output_selection,
+                only_output=True,
+            )
 
     @classmethod
     def get_solc_version(cls, compiler_str: str, address: str) -> Version:
