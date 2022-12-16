@@ -7,6 +7,9 @@ import os
 import re
 import time
 import warnings
+from contextlib import contextmanager
+from copy import deepcopy
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from textwrap import TextWrapper
 from threading import get_ident  # noqa
@@ -85,7 +88,88 @@ _explorer_tokens = {
     "moonscan": "MOONSCAN_TOKEN",
 }
 
+BATCHES_CACHE = {}
+IS_BATCH_CONTEXT_OPEN = False
+BATCH_CONTEXT_NAME = None
+BATCH_BASE_PATH = os.environ.get('BATCH_WRITE_PATH', './')
 
+address_T = type(str)
+bytes_T = type(str)
+abi_T = type(dict)
+skeletton = {
+    "version": "1.0",
+    "chainId": "43114",
+    "createdAt": 1669047823034,
+    "meta": {
+        "name": "",
+        "description": "",
+        "txBuilderVersion": "1.11.1",
+        "createdFromSafeAddress": "",
+        "createdFromOwnerAddress": "",
+        "checksum": "0x76b292588001ecf2b53f7d881688f661609be9905061393b250ae1bd61debede"
+    }
+}
+
+
+def wrap_all_tx(tx_in_order):
+    batch = deepcopy(skeletton)
+    batch['transactions'] = [tx[0].dict() for tx in tx_in_order]
+    return batch
+
+def get_arg_names_from_func_abi(func_abi):
+    return [row["name"] for row in func_abi['inputs']]
+
+def generate_call_data_from_func_abi(func_abi, to, *args, data=None, value="0"):
+    value = str(value)
+    assert len(args) == len(func_abi["inputs"])
+    func_abi = deepcopy(func_abi)
+    if "stateMutability" in func_abi:
+        del func_abi["stateMutability"]
+    if "type" in func_abi:
+        del func_abi["type"]
+    if "outputs" in func_abi:
+        del func_abi["outputs"]
+    args_names = get_arg_names_from_func_abi(func_abi)
+    arguments = dict(zip(args_names, [str(arg) for arg in args]))
+    return TxInfo(to, func_abi, arguments, data, value)
+
+@dataclass
+class TxInfo:
+    to: address_T
+    contractMethod: abi_T
+    contractInputsValues: dict
+    data: bytes_T = None
+    value: str = "0"
+
+    def dict(self):
+        return {k: v for k, v in asdict(self).items()}
+
+@contextmanager
+def batch_creation(path=None):
+    global BATCHES_CACHE
+    global IS_BATCH_CONTEXT_OPEN
+    global BATCH_CONTEXT_NAME
+    if path is None:
+        path = Path(BATCH_BASE_PATH) / f"batch_{int(time.time())}.json"
+    previous_context_name = BATCH_CONTEXT_NAME
+    BATCH_CONTEXT_NAME = path
+    BATCHES_CACHE[path] = []
+    previous_state_for_context_usage = IS_BATCH_CONTEXT_OPEN
+    IS_BATCH_CONTEXT_OPEN = True
+    yield
+    
+    with open(path, 'w') as f:
+        json.dump(wrap_all_tx(BATCHES_CACHE[path]), f)
+    
+    del BATCHES_CACHE[path]
+    IS_BATCH_CONTEXT_OPEN = previous_state_for_context_usage
+    BATCH_CONTEXT_NAME = previous_context_name
+
+def get_current_batch_context_name():
+    global BATCH_CONTEXT_NAME
+    return BATCH_CONTEXT_NAME
+
+    
 class _ContractBase:
 
     _dir_color = "bright magenta"
@@ -1929,6 +2013,14 @@ class _ContractMethod:
                 "Final argument must be a dict of transaction parameters that "
                 "includes a `from` field specifying the sender of the transaction"
             )
+        batch_path = get_current_batch_context_name()
+
+        if batch_path is not None:
+            BATCHES_CACHE[batch_path].append(
+                (generate_call_data_from_func_abi(
+                    self.abi, str(self._address), *args, data=None, value=tx["value"]),
+                    tx['from'])
+                )
 
         return tx["from"].transfer(
             self._address,
