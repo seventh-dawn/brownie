@@ -1210,10 +1210,13 @@ class Contract(_DeployedContractBase):
         )
 
         if not is_verified:
+            print('NOT VERIFIED')
             return cls.from_abi(name, address, abi, owner)
 
         compiler_str = cls.get_compiler_str_from_data(data)
         version, is_compilable = cls.get_version_infos_from_compiler_str(address, compiler_str)
+        print('#######')
+        print(version, is_compilable)
 
         if not is_compilable:
             if not silent:
@@ -1222,7 +1225,7 @@ class Contract(_DeployedContractBase):
                     "supported by Brownie. Some debugging functionality will not be available.",
                     BrownieCompilerWarning,
                 )
-            return cls.from_abi(name, address, abi, owner)
+            return cls.get_layout_from_data(data, name, version)
         elif data["result"][0]["OptimizationUsed"] in ("true", "false"):
             if not silent:
                 warnings.warn(
@@ -1230,7 +1233,8 @@ class Contract(_DeployedContractBase):
                     "Some debugging functionality will not be available.",
                     BrownieCompilerWarning,
                 )
-            return cls.from_abi(name, address, abi, owner)
+            return cls.get_layout_from_data(data, name, version)
+        print('#########')
 
         return cls.get_layout_from_data(data, name, version)
 
@@ -1437,12 +1441,19 @@ class Contract(_DeployedContractBase):
     @classmethod
     def get_layout_from_data(cls, data, name, version):
         compiler_str = data["result"][0]["CompilerVersion"]
+        enabled_flag = data["result"][0]["OptimizationUsed"]
+        if enabled_flag not in ['true', 'false']:
+            enabled_flag = int(enabled_flag)
+
+        result = data['result'][0]
         optimizer = {
-            "enabled": bool(int(data["result"][0]["OptimizationUsed"])),
-            "runs": int(data["result"][0]["Runs"]),
+            "enabled": bool(enabled_flag),
+            "runs": int(result.get("Runs") or result.get('OptimizationRuns'))
         }
         evm_version = data["result"][0].get("EVMVersion", "Default")
-        if evm_version == "Default":
+        import json
+        json.dump(result, open('./test.json', "w"))
+        if str(evm_version).upper() == "Default".upper():
             evm_version = None
 
         source_str = "\n".join(data["result"][0]["SourceCode"].splitlines())
