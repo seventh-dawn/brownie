@@ -86,6 +86,7 @@ _explorer_tokens = {
     "snowtrace": "SNOWTRACE_TOKEN",
     "aurorascan": "AURORASCAN_TOKEN",
     "moonscan": "MOONSCAN_TOKEN",
+    "andromeda":"ANDROMEDA_TOKEN",
 }
 
 BATCHES_CACHE = {}
@@ -426,9 +427,10 @@ class ContractContainer(_ContractBase):
                 f"Publishing source is only supported on {', '.join(_explorer_tokens)},"
                 "change the Explorer API"
             )
-
         if os.getenv(env_token):
             api_key = os.getenv(env_token)
+        elif "andromeda" in url:
+            api_key="NO_TOKEN"
         else:
             host = urlparse(url).netloc
             host = host[host.index(".") + 1 :]
