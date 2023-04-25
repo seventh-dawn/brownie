@@ -57,7 +57,7 @@ from brownie.exceptions import (
     VirtualMachineError,
 )
 from brownie.project import compiler, ethpm
-from brownie.project.compiler.solidity import SOLIDITY_ERROR_CODES
+from brownie.project.compiler.solidity import SOLIDITY_ERROR_CODES, get_version_full_name
 from brownie.project.flattener import Flattener
 from brownie.typing import AccountsType, TransactionReceiptType
 from brownie.utils import color
@@ -526,6 +526,10 @@ class ContractContainer(_ContractBase):
             "constructorArguements": constructor_arguments,
             "licenseType": license_code
         }
+        if "andromeda" in url:
+            payload_verification['compilerversion'] = 'v'+get_version_full_name(
+                CONFIG.settings['compiler']['solc']['version']
+            )
         response = requests.post(url, data=payload_verification, headers=REQUEST_HEADERS)
         if response.status_code != 200:
             raise ConnectionError(
