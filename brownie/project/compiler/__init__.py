@@ -33,7 +33,7 @@ STANDARD_JSON: Dict = {
     "settings": {
         "outputSelection": {
             "*": {
-                "*": ["abi", "devdoc", "evm.bytecode", "evm.deployedBytecode", "userdoc", "storageLayout"],
+                "*": ["abi", "metadata", "devdoc", "evm.bytecode", "evm.deployedBytecode", "userdoc", "storageLayout"],
                 "": ["ast"],
             }
         },

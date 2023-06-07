@@ -86,13 +86,13 @@ _explorer_tokens = {
     "snowtrace": "SNOWTRACE_TOKEN",
     "aurorascan": "AURORASCAN_TOKEN",
     "moonscan": "MOONSCAN_TOKEN",
-    "andromeda":"ANDROMEDA_TOKEN",
+    "andromeda": "ANDROMEDA_TOKEN",
 }
 
 BATCHES_CACHE = {}
 IS_BATCH_CONTEXT_OPEN = False
 BATCH_CONTEXT_NAME = None
-BATCH_BASE_PATH = os.environ.get('BATCH_WRITE_PATH', './')
+BATCH_BASE_PATH = os.environ.get("BATCH_WRITE_PATH", "./")
 
 address_T = type(str)
 bytes_T = type(str)
@@ -107,18 +107,20 @@ skeletton = {
         "txBuilderVersion": "1.11.1",
         "createdFromSafeAddress": "",
         "createdFromOwnerAddress": "",
-        "checksum": "0x76b292588001ecf2b53f7d881688f661609be9905061393b250ae1bd61debede"
-    }
+        "checksum": "0x76b292588001ecf2b53f7d881688f661609be9905061393b250ae1bd61debede",
+    },
 }
 
 
 def wrap_all_tx(tx_in_order):
     batch = deepcopy(skeletton)
-    batch['transactions'] = [tx[0].dict() for tx in tx_in_order]
+    batch["transactions"] = [tx[0].dict() for tx in tx_in_order]
     return batch
 
+
 def get_arg_names_from_func_abi(func_abi):
-    return [row["name"] for row in func_abi['inputs']]
+    return [row["name"] for row in func_abi["inputs"]]
+
 
 def generate_call_data_from_func_abi(func_abi, to, *args, data=None, value="0"):
     value = str(value)
@@ -134,6 +136,7 @@ def generate_call_data_from_func_abi(func_abi, to, *args, data=None, value="0"):
     arguments = dict(zip(args_names, [str(arg) for arg in args]))
     return TxInfo(to, func_abi, arguments, data, value)
 
+
 @dataclass
 class TxInfo:
     to: address_T
@@ -144,6 +147,7 @@ class TxInfo:
 
     def dict(self):
         return {k: v for k, v in asdict(self).items()}
+
 
 @contextmanager
 def batch_creation(path=None):
@@ -158,21 +162,29 @@ def batch_creation(path=None):
     previous_state_for_context_usage = IS_BATCH_CONTEXT_OPEN
     IS_BATCH_CONTEXT_OPEN = True
     yield
-    
-    with open(path, 'w') as f:
+    misformatted_parameters = re.compile("'([0-9a-fA-Fx]*)'")
+    misformatted_tuple = re.compile(r'''"\(([a-zA-Z0-9 \n,\\"]*)\)"''')
+
+    with open(path, "w") as f:
         json.dump(wrap_all_tx(BATCHES_CACHE[path]), f)
-    
+    with open(path, "r") as f:
+        txt = f.read()
+    txt = misformatted_parameters.sub(r"\"\1\"", txt)
+    txt = misformatted_tuple.sub('''"[\1]"''', txt)
+    with open(path, "w") as f:
+        f.write(txt)
+
     del BATCHES_CACHE[path]
     IS_BATCH_CONTEXT_OPEN = previous_state_for_context_usage
     BATCH_CONTEXT_NAME = previous_context_name
+
 
 def get_current_batch_context_name():
     global BATCH_CONTEXT_NAME
     return BATCH_CONTEXT_NAME
 
-    
-class _ContractBase:
 
+class _ContractBase:
     _dir_color = "bright magenta"
 
     def __init__(self, project: Any, build: Dict, sources: Dict) -> None:
@@ -430,7 +442,7 @@ class ContractContainer(_ContractBase):
         if os.getenv(env_token):
             api_key = os.getenv(env_token)
         elif "andromeda" in url:
-            api_key="NO_TOKEN"
+            api_key = "NO_TOKEN"
         else:
             host = urlparse(url).netloc
             host = host[host.index(".") + 1 :]
@@ -517,19 +529,21 @@ class ContractContainer(_ContractBase):
             "module": "contract",
             "action": "verifysourcecode",
             "contractaddress": address,
-            "sourceCode": io.StringIO(json.dumps(flatten_libraries_for_file(self._flattener.standard_input_json))),
+            "sourceCode": io.StringIO(
+                json.dumps(flatten_libraries_for_file(self._flattener.standard_input_json))
+            ),
             "codeformat": "solidity-standard-json-input",
             "contractname": f"{self._flattener.contract_file}:{self._flattener.contract_name}",
             "compilerversion": f"v{contract_info['compiler_version']}",
             "optimizationUsed": 1 if contract_info["optimizer_enabled"] else 0,
             "runs": contract_info["optimizer_runs"],
             "constructorArguements": constructor_arguments,
-            "licenseType": license_code
+            "licenseType": license_code,
         }
-        if "andromeda" in url:
-            payload_verification['compilerversion'] = 'v'+get_version_full_name(
-                CONFIG.settings['compiler']['solc']['version']
-            )
+        # if "andromeda" in url:
+        #     payload_verification['compilerversion'] = 'v'+get_version_full_name(
+        #         CONFIG.settings['compiler']['solc']['version']
+        #     )
         response = requests.post(url, data=payload_verification, headers=REQUEST_HEADERS)
         if response.status_code != 200:
             raise ConnectionError(
@@ -566,6 +580,7 @@ class ContractContainer(_ContractBase):
                     print(f"Verification complete. Result: {color(col)}{data['result']}{color}")
                 return data["message"] == "OK"
             time.sleep(10)
+
     def _slice_source(self, source: str, offset: list) -> str:
         """Slice the source of the contract, preserving any comments above the first line."""
         offset_start = offset[0]
@@ -591,38 +606,40 @@ class ContractContainer(_ContractBase):
         offset_start = max(0, offset_start)
         return source[offset_start : offset[1]].strip()
 
+
 def get_stripped_library(name, sources):
-    library_source = sources[name]['content'].split('\n')
+    library_source = sources[name]["content"].split("\n")
     lines = []
     for line in library_source:
-        if 'pragma' in line:
+        if "pragma" in line:
             continue
-        if 'license' in line.lower():
+        if "license" in line.lower():
             continue
         lines.append(line)
-    return '\n'.join(lines)
+    return "\n".join(lines)
+
 
 def flatten_libraries_for_file(data):
-    sources = data['sources']
-    libraries = data['settings']['libraries']
+    sources = data["sources"]
+    libraries = data["settings"]["libraries"]
     files_requiring_libraries = list(libraries.keys())
     file_to_flatten = files_requiring_libraries[0]
-    libraries_files = [name.replace('.sol', '') + '.sol' for name in libraries[file_to_flatten]]
+    libraries_files = [name.replace(".sol", "") + ".sol" for name in libraries[file_to_flatten]]
     processed_lines = []
-    contract_source = sources[file_to_flatten]['content'].split('\n')
+    contract_source = sources[file_to_flatten]["content"].split("\n")
     for _, line in enumerate(contract_source):
-        if 'import' in line and any(file_name in line for file_name in libraries_files):
+        if "import" in line and any(file_name in line for file_name in libraries_files):
             file_name = [name for name in libraries_files if name in line][0]
             line = get_stripped_library(file_name, sources)
         processed_lines.append(line)
-    new_source = '\n'.join(processed_lines)
-    data['sources'][file_to_flatten] = {'content': new_source}
+    new_source = "\n".join(processed_lines)
+    data["sources"][file_to_flatten] = {"content": new_source}
     for library_name in libraries_files:
-        data['sources'].pop(library_name)
+        data["sources"].pop(library_name)
     return data
 
-class ContractConstructor:
 
+class ContractConstructor:
     _dir_color = "bright magenta"
 
     def __init__(self, parent: "ContractContainer", name: str) -> None:
@@ -1158,6 +1175,7 @@ class Contract(_DeployedContractBase):
     ):
         address = _resolve_address(address)
         data = _fetch_from_explorer(address, "getsourcecode", silent)
+        json.dump(data, open("t.json", "w"))
         is_verified = bool(data["result"][0].get("SourceCode"))
 
         if is_verified:
@@ -1208,20 +1226,20 @@ class Contract(_DeployedContractBase):
         # if this is a proxy, fetch information for the implementation contract
         if as_proxy_for is not None:
             return cls.storage_from_explorer(
-            as_proxy_for,
-            None,
-            owner,
-            silent,
-            persist,
-        )
+                as_proxy_for,
+                None,
+                owner,
+                silent,
+                persist,
+            )
 
         if not is_verified:
-            print('NOT VERIFIED')
+            print("NOT VERIFIED")
             return cls.from_abi(name, address, abi, owner)
 
         compiler_str = cls.get_compiler_str_from_data(data)
         version, is_compilable = cls.get_version_infos_from_compiler_str(address, compiler_str)
-        print('#######')
+        print("#######")
         print(version, is_compilable)
 
         if not is_compilable:
@@ -1240,10 +1258,9 @@ class Contract(_DeployedContractBase):
                     BrownieCompilerWarning,
                 )
             return cls.get_layout_from_data(data, name, version)
-        print('#########')
+        print("#########")
 
         return cls.get_layout_from_data(data, name, version)
-
 
     @classmethod
     def from_explorer(
@@ -1272,11 +1289,13 @@ class Contract(_DeployedContractBase):
         """
         address = _resolve_address(address)
         data = _fetch_from_explorer(address, "getsourcecode", silent)
+        json.dump(data, open("j.json", "w"))
         is_verified = bool(data["result"][0].get("SourceCode"))
 
         if is_verified:
             abi = json.loads(data["result"][0]["ABI"])
             name = data["result"][0]["ContractName"]
+            print(f"###{name}")
         else:
             # if the source is not available, try to fetch only the ABI
             try:
@@ -1393,7 +1412,7 @@ class Contract(_DeployedContractBase):
                 )
             except Exception:
                 is_compilable = False
-        return version,is_compilable
+        return version, is_compilable
 
     @classmethod
     def get_sources_and_build_from_data(cls, data, name, version):
@@ -1441,38 +1460,31 @@ class Contract(_DeployedContractBase):
                 optimizer=optimizer,
                 evm_version=evm_version,
             )
-            
-        return sources,build_json
+
+        return sources, build_json
 
     @classmethod
     def get_layout_from_data(cls, data, name, version):
+        print("RABBIT")
         compiler_str = data["result"][0]["CompilerVersion"]
         enabled_flag = data["result"][0]["OptimizationUsed"]
-        if enabled_flag not in ['true', 'false']:
+        if enabled_flag not in ["true", "false"]:
             enabled_flag = int(enabled_flag)
 
-        result = data['result'][0]
+        import json
+
+        json.dump(data, open("./test.json", "w"))
+        result = data["result"][0]
         optimizer = {
             "enabled": bool(enabled_flag),
-            "runs": int(result.get("Runs") or result.get('OptimizationRuns'))
+            "runs": int(result.get("Runs") or result.get("OptimizationRuns")),
         }
         evm_version = data["result"][0].get("EVMVersion", "Default")
-        import json
-        json.dump(result, open('./test.json', "w"))
         if str(evm_version).upper() == "Default".upper():
             evm_version = None
 
         source_str = "\n".join(data["result"][0]["SourceCode"].splitlines())
-        output_selection = {
-            "*": {
-                "*": [
-                    "storageLayout"
-                ],
-                "": [
-                    "ast"
-                ]
-            }
-        }
+        output_selection = {"*": {"*": ["storageLayout"], "": ["ast"]}}
         if source_str.startswith("{{"):
             # source was verified using compiler standard JSON
             input_json = json.loads(source_str[1:-1])
@@ -1482,9 +1494,13 @@ class Contract(_DeployedContractBase):
 
             compiler.set_solc_version(str(version))
             input_json.update(
-                compiler.generate_input_json(sources, optimizer=optimizer, evm_version=evm_version, remappings=remappings)
+                compiler.generate_input_json(
+                    sources, optimizer=optimizer, evm_version=evm_version, remappings=remappings
+                )
             )
-            input_json['settings']['outputSelection'] = output_selection
+            input_json["settings"]["outputSelection"] = output_selection
+            print("CASEA")
+            json.dump(input_json, open("./andro.json", "w"))
             output_json = compiler.compile_from_input_json(input_json)
             return output_json
         else:
@@ -1499,6 +1515,8 @@ class Contract(_DeployedContractBase):
                     path_str = f"{name}-flattened.sol"
                 sources = {path_str: source_str}
 
+            json.dump(sources, open("./andro.json", "w"))
+            print("CASEB")
             return compiler.compile_and_format(
                 sources,
                 solc_version=str(version),
@@ -1506,9 +1524,8 @@ class Contract(_DeployedContractBase):
                 optimizer=optimizer,
                 evm_version=evm_version,
                 output_selection=output_selection,
-                only_output=True
+                only_output=True,
             )
-            
 
     @classmethod
     def get_solc_version(cls, compiler_str: str, address: str) -> Version:
@@ -1915,7 +1932,6 @@ class OverloadedMethod:
 
 
 class _ContractMethod:
-
     _dir_color = "bright magenta"
 
     def __init__(
@@ -2036,10 +2052,13 @@ class _ContractMethod:
 
         if batch_path is not None:
             BATCHES_CACHE[batch_path].append(
-                (generate_call_data_from_func_abi(
-                    self.abi, str(self._address), *args, data=None, value=tx["value"]),
-                    tx['from'])
+                (
+                    generate_call_data_from_func_abi(
+                        self.abi, str(self._address), *args, data=None, value=tx["value"]
+                    ),
+                    tx["from"],
                 )
+            )
 
         return tx["from"].transfer(
             self._address,
@@ -2271,7 +2290,6 @@ def _get_tx(owner: Optional[AccountsType], args: Tuple) -> Tuple:
 def _get_method_object(
     address: str, abi: Dict, name: str, owner: Optional[AccountsType], natspec: Dict
 ) -> Union["ContractCall", "ContractTx"]:
-
     if "constant" in abi:
         constant = abi["constant"]
     else:
@@ -2393,9 +2411,25 @@ def _fetch_from_explorer(address: str, action: str, silent: bool) -> Dict:
     if response.status_code != 200:
         raise ConnectionError(f"Status {response.status_code} when querying {url}: {response.text}")
     data = response.json()
+    if "AdditionalSources" in data["result"][0]:
+        data = format_from_andromeda(data)
     if int(data["status"]) != 1:
         raise ValueError(f"Failed to retrieve data from API: {data}")
 
+    return data
+
+
+def format_from_andromeda(data):
+    result = data["result"][0]
+    sources = {result["FileName"]: {"content": result["SourceCode"]}}
+    for source in result.get("AdditionalSources", []):
+        sources[source["Filename"]] = {"content": source["SourceCode"]}
+    result["Proxy"] = result["IsProxy"]
+    result["Implementation"] = result.get("ImplementationAddress", "")
+    result["Runs"] = result["OptimizationRuns"]
+    result["SourceCode"] = json.dumps(sources)
+    result["OptimizationUsed"] = "1" if result["OptimizationUsed"] == "true" else "0"
+    data["result"][0] = result
     return data
 
 
