@@ -486,6 +486,7 @@ class ContractContainer(_ContractBase):
         elif "apache" in identifier and "2.0" in identifier:
             license_code = 12
 
+        is_andromeda = "andromeda" in url
         # get constructor arguments
         params_tx: Dict = {
             "apikey": api_key,
@@ -494,12 +495,13 @@ class ContractContainer(_ContractBase):
             "address": address,
             "page": 1,
             "sort": "asc",
-            "offset": 1,
+            "offset": 1 if not is_andromeda else 0,
         }
         i = 0
         while True:
             response = requests.get(url, params=params_tx, headers=REQUEST_HEADERS)
             if response.status_code != 200:
+                print("ERROR STATUS")
                 raise ConnectionError(
                     f"Status {response.status_code} when querying {url}: {response.text}"
                 )
@@ -523,6 +525,18 @@ class ContractContainer(_ContractBase):
         else:
             constructor_arguments = ""
 
+        if is_andromeda:
+            standard_input_json = self.get_verification_info()["standard_json_input"]
+            verify_andromeda_contract(
+                standard_input_json,
+                # f"{self._flattener.contract_file}:{self._flattener.contract_name}",
+                self._name,
+                address,
+                contract_info
+                # CONFIG.compiler.
+                # f"v{contract_info['compiler_version']}",
+            )
+            return True
         # Submit verification
         payload_verification: Dict = {
             "apikey": api_key,
@@ -537,9 +551,10 @@ class ContractContainer(_ContractBase):
             "compilerversion": f"v{contract_info['compiler_version']}",
             "optimizationUsed": 1 if contract_info["optimizer_enabled"] else 0,
             "runs": contract_info["optimizer_runs"],
-            "constructorArguements": constructor_arguments,
+            # "constructorArguements": constructor_arguments,
             "licenseType": license_code,
         }
+
         # if "andromeda" in url:
         #     payload_verification['compilerversion'] = 'v'+get_version_full_name(
         #         CONFIG.settings['compiler']['solc']['version']
@@ -550,6 +565,7 @@ class ContractContainer(_ContractBase):
                 f"Status {response.status_code} when querying {url}: {response.text}"
             )
         data = response.json()
+
         if int(data["status"]) != 1:
             raise ValueError(f"Failed to submit verification request: {data['result']}")
 
@@ -576,7 +592,11 @@ class ContractContainer(_ContractBase):
                     print("Verification pending...")
             else:
                 if not silent:
-                    col = "bright green" if data["message"] == "OK" else "bright red"
+                    col = (
+                        "bright green"
+                        if (data["message"] == "OK" and "Fail" not in data["result"])
+                        else "bright red"
+                    )
                     print(f"Verification complete. Result: {color(col)}{data['result']}{color}")
                 return data["message"] == "OK"
             time.sleep(10)
@@ -983,7 +1003,11 @@ class Contract(_DeployedContractBase):
     """
 
     def __init__(
-        self, address_or_alias: str, *args: Any, owner: Optional[AccountsType] = None, **kwargs: Any
+        self,
+        address_or_alias: str,
+        *args: Any,
+        owner: Optional[AccountsType] = None,
+        **kwargs: Any,
     ) -> None:
         """
         Recreate a `Contract` object from the local database.
@@ -1202,7 +1226,9 @@ class Contract(_DeployedContractBase):
                 address, int(web3.keccak(text="eip1967.proxy.implementation").hex(), 16) - 1
             )
             # always check for an EIP1822 proxy - https://eips.ethereum.org/EIPS/eip-1822
-            implementation_eip1822 = web3.eth.get_storage_at(address, web3.keccak(text="PROXIABLE"))
+            implementation_eip1822 = web3.eth.get_storage_at(
+                address, web3.keccak(text="PROXIABLE")
+            )
             if len(implementation_eip1967) > 0 and int(implementation_eip1967.hex(), 16):
                 as_proxy_for = _resolve_address(implementation_eip1967[-20:])
             elif len(implementation_eip1822) > 0 and int(implementation_eip1822.hex(), 16):
@@ -1234,12 +1260,10 @@ class Contract(_DeployedContractBase):
             )
 
         if not is_verified:
-            print("NOT VERIFIED")
             return cls.from_abi(name, address, abi, owner)
 
         compiler_str = cls.get_compiler_str_from_data(data)
         version, is_compilable = cls.get_version_infos_from_compiler_str(address, compiler_str)
-        print("#######")
         print(version, is_compilable)
 
         if not is_compilable:
@@ -1258,7 +1282,6 @@ class Contract(_DeployedContractBase):
                     BrownieCompilerWarning,
                 )
             return cls.get_layout_from_data(data, name, version)
-        print("#########")
 
         return cls.get_layout_from_data(data, name, version)
 
@@ -1295,7 +1318,6 @@ class Contract(_DeployedContractBase):
         if is_verified:
             abi = json.loads(data["result"][0]["ABI"])
             name = data["result"][0]["ContractName"]
-            print(f"###{name}")
         else:
             # if the source is not available, try to fetch only the ABI
             try:
@@ -1317,7 +1339,9 @@ class Contract(_DeployedContractBase):
                 address, int(web3.keccak(text="eip1967.proxy.implementation").hex(), 16) - 1
             )
             # always check for an EIP1822 proxy - https://eips.ethereum.org/EIPS/eip-1822
-            implementation_eip1822 = web3.eth.get_storage_at(address, web3.keccak(text="PROXIABLE"))
+            implementation_eip1822 = web3.eth.get_storage_at(
+                address, web3.keccak(text="PROXIABLE")
+            )
             if len(implementation_eip1967) > 0 and int(implementation_eip1967.hex(), 16):
                 as_proxy_for = _resolve_address(implementation_eip1967[-20:])
             elif len(implementation_eip1822) > 0 and int(implementation_eip1822.hex(), 16):
@@ -2409,7 +2433,9 @@ def _fetch_from_explorer(address: str, action: str, silent: bool) -> Dict:
 
     response = requests.get(url, params=params, headers=REQUEST_HEADERS)
     if response.status_code != 200:
-        raise ConnectionError(f"Status {response.status_code} when querying {url}: {response.text}")
+        raise ConnectionError(
+            f"Status {response.status_code} when querying {url}: {response.text}"
+        )
     data = response.json()
     if "AdditionalSources" in data["result"][0]:
         data = format_from_andromeda(data)
@@ -2486,3 +2512,46 @@ def _comment_slicer(match: Match) -> str:
     else:
         # multi line comment without line break
         return " "
+
+
+def verify_andromeda_contract(standard_json, contract_name, contract_address, compiler_info):
+    base = "https://andromeda-explorer.metis.io/api"
+    check_verification_status = lambda x: requests.get(
+        base + f"?module=contract&action=checkverifystatus&guid={x}"
+    )
+    compiler_version = f"v{compiler_info.get('compiler_version')}"
+
+    runs = compiler_info.get("optimizer_runs", 0)
+    optimization_used = compiler_info.get("optimizer_enabled", 0)
+    payload_verification = {
+        "module": "contract",
+        "action": "verifysourcecode",
+        "contractaddress": contract_address,
+        "sourceCode": io.StringIO(json.dumps(standard_json)),
+        "codeformat": "solidity-standard-json-input",
+        "contractname": contract_name,
+        "compilerversion": compiler_version,
+        "optimizationUsed": bool(optimization_used),
+        "runs": runs,
+    }
+    print(payload_verification)
+    response = requests.post(base, data=payload_verification)
+    assert response.status_code == 200
+    guid = response.json()["result"]
+    print(f"Verification started with guid: {guid}")
+
+    time.sleep(5)
+    while True:
+        response = check_verification_status(guid)
+        assert response.status_code == 200
+        status = response.json()["result"]
+        if "Pass" in status:
+            print(f"Verification success")
+            break
+        elif "Pending" in status:
+            print(f"Verification pending")
+            time.sleep(5)
+        else:
+            print(f"Verification failed")
+            raise Exception("Verification failed")
+    return response
