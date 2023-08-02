@@ -102,18 +102,13 @@ skeletton = {
     "chainId": "43114",
     "createdAt": 1669047823034,
     "meta": {
-        "name": "",
-        "description": "",
-        "txBuilderVersion": "1.11.1",
-        "createdFromSafeAddress": "",
-        "createdFromOwnerAddress": "",
-        "checksum": "0x76b292588001ecf2b53f7d881688f661609be9905061393b250ae1bd61debede",
     },
 }
 
 
-def wrap_all_tx(tx_in_order):
+def wrap_all_tx(tx_in_order, chain_id = 43114):
     batch = deepcopy(skeletton)
+    batch["chainId"] = str(chain_id)
     batch["transactions"] = [tx[0].dict() for tx in tx_in_order]
     return batch
 
@@ -166,7 +161,7 @@ def batch_creation(path=None):
     misformatted_tuple = re.compile(r'''"\(([a-zA-Z0-9 \n,\\"]*)\)"''')
 
     with open(path, "w") as f:
-        json.dump(wrap_all_tx(BATCHES_CACHE[path]), f)
+        json.dump(wrap_all_tx(BATCHES_CACHE[path], chain.id), f)
     with open(path, "r") as f:
         txt = f.read()
     txt = misformatted_parameters.sub(r"\"\1\"", txt)
