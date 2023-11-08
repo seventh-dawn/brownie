@@ -101,12 +101,11 @@ skeletton = {
     "version": "1.0",
     "chainId": "43114",
     "createdAt": 1669047823034,
-    "meta": {
-    },
+    "meta": {},
 }
 
 
-def wrap_all_tx(tx_in_order, chain_id = 43114):
+def wrap_all_tx(tx_in_order, chain_id=43114):
     batch = deepcopy(skeletton)
     batch["chainId"] = str(chain_id)
     batch["transactions"] = [tx[0].dict() for tx in tx_in_order]
@@ -501,21 +500,21 @@ class ContractContainer(_ContractBase):
                     f"Status {response.status_code} when querying {url}: {response.text}"
                 )
             data = response.json()
-            if int(data["status"]) == 1:
+            if int(data["status"]) == 1 and data["result"]:
                 # Constructor arguments received
                 break
             else:
                 # Wait for contract to be recognized by etherscan
                 # This takes a few seconds after the contract is deployed
-                # After 10 loops we throw with the API result message (includes address)
-                if i >= 10:
+                # After 20 loops we throw with the API result message (includes address)
+                if i >= 20:
                     raise ValueError(f"API request failed with: {data['result']}")
                 elif i == 0 and not silent:
                     print(f"Waiting for {url} to process contract...")
                 i += 1
-                time.sleep(10)
+                time.sleep(5)
 
-        if data["message"] == "OK":
+        if data["message"] == "OK" and data["result"]:
             constructor_arguments = data["result"][0]["input"][contract_info["bytecode_len"] + 2 :]
         else:
             constructor_arguments = ""
@@ -546,7 +545,7 @@ class ContractContainer(_ContractBase):
             "compilerversion": f"v{contract_info['compiler_version']}",
             "optimizationUsed": 1 if contract_info["optimizer_enabled"] else 0,
             "runs": contract_info["optimizer_runs"],
-            # "constructorArguements": constructor_arguments,
+            "constructorArguements": constructor_arguments,
             "licenseType": license_code,
         }
 
@@ -1221,9 +1220,7 @@ class Contract(_DeployedContractBase):
                 address, int(web3.keccak(text="eip1967.proxy.implementation").hex(), 16) - 1
             )
             # always check for an EIP1822 proxy - https://eips.ethereum.org/EIPS/eip-1822
-            implementation_eip1822 = web3.eth.get_storage_at(
-                address, web3.keccak(text="PROXIABLE")
-            )
+            implementation_eip1822 = web3.eth.get_storage_at(address, web3.keccak(text="PROXIABLE"))
             if len(implementation_eip1967) > 0 and int(implementation_eip1967.hex(), 16):
                 as_proxy_for = _resolve_address(implementation_eip1967[-20:])
             elif len(implementation_eip1822) > 0 and int(implementation_eip1822.hex(), 16):
@@ -1334,9 +1331,7 @@ class Contract(_DeployedContractBase):
                 address, int(web3.keccak(text="eip1967.proxy.implementation").hex(), 16) - 1
             )
             # always check for an EIP1822 proxy - https://eips.ethereum.org/EIPS/eip-1822
-            implementation_eip1822 = web3.eth.get_storage_at(
-                address, web3.keccak(text="PROXIABLE")
-            )
+            implementation_eip1822 = web3.eth.get_storage_at(address, web3.keccak(text="PROXIABLE"))
             if len(implementation_eip1967) > 0 and int(implementation_eip1967.hex(), 16):
                 as_proxy_for = _resolve_address(implementation_eip1967[-20:])
             elif len(implementation_eip1822) > 0 and int(implementation_eip1822.hex(), 16):
@@ -2428,9 +2423,7 @@ def _fetch_from_explorer(address: str, action: str, silent: bool) -> Dict:
 
     response = requests.get(url, params=params, headers=REQUEST_HEADERS)
     if response.status_code != 200:
-        raise ConnectionError(
-            f"Status {response.status_code} when querying {url}: {response.text}"
-        )
+        raise ConnectionError(f"Status {response.status_code} when querying {url}: {response.text}")
     data = response.json()
     if "AdditionalSources" in data["result"][0]:
         data = format_from_andromeda(data)
