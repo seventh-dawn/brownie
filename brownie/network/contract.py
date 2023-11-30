@@ -105,6 +105,36 @@ skeletton = {
 }
 
 
+def normalize_data_from_etherscan(data):
+    assert "result" in data, "data contains no result"
+    result = data["result"][0]
+
+    try:
+        source_code = json.loads(result["SourceCode"])
+    except json.JSONDecodeError:
+        return data
+    # print(source_code.keys())
+    if "sources" in source_code:
+        source_code.update(source_code["sources"])
+        del source_code["sources"]
+        # print(source_code.keys())
+
+    to_delete = []
+    for key, value in source_code.items():
+        if "content" not in value:
+            result[key] = value
+            to_delete.append(key)
+        # else:
+        #     print(key)
+    for key in to_delete:
+        del source_code[key]
+    source_code_str = json.dumps(source_code)
+    result["SourceCode"] = source_code_str
+    data["result"][0] = result
+
+    return data
+
+
 def wrap_all_tx(tx_in_order, chain_id=43114):
     batch = deepcopy(skeletton)
     batch["chainId"] = str(chain_id)
@@ -1382,6 +1412,7 @@ class Contract(_DeployedContractBase):
 
         sources, build_json = cls.get_sources_and_build_from_data(data, name, version)
 
+        # print(build_json.keys())
         build_json = build_json[name]
         if as_proxy_for is not None:
             build_json.update(abi=abi, natspec=implementation_contract._build.get("natspec"))
@@ -1430,16 +1461,23 @@ class Contract(_DeployedContractBase):
 
     @classmethod
     def get_sources_and_build_from_data(cls, data, name, version):
+        # print(version)
+        data = normalize_data_from_etherscan(data)
+        with open(name + ".json", "w") as f:
+            json.dump(data, f)
         compiler_str = data["result"][0]["CompilerVersion"]
         optimizer = {
             "enabled": bool(int(data["result"][0]["OptimizationUsed"])),
             "runs": int(data["result"][0]["Runs"]),
         }
         evm_version = data["result"][0].get("EVMVersion", "Default")
-        if evm_version == "Default":
-            evm_version = None
+        if evm_version in ["Default", ""]:
+            evm_version = "istanbul"
 
         source_str = "\n".join(data["result"][0]["SourceCode"].splitlines())
+        name_str = f"name_{int(time.time())}.json"
+        with open(name_str, "w") as f:
+            f.write(source_str)
         if source_str.startswith("{{"):
             # source was verified using compiler standard JSON
             input_json = json.loads(source_str[1:-1])
@@ -1458,7 +1496,9 @@ class Contract(_DeployedContractBase):
         else:
             if source_str.startswith("{"):
                 # source was submitted as multiple files
-                sources = {k: v["content"] for k, v in json.loads(source_str).items()}
+                sources = {
+                    k: v["content"] for k, v in json.loads(source_str).items() if "content" in v
+                }
             else:
                 # source was submitted as a single file
                 if compiler_str.startswith("vyper"):
@@ -1479,7 +1519,6 @@ class Contract(_DeployedContractBase):
 
     @classmethod
     def get_layout_from_data(cls, data, name, version):
-        print("RABBIT")
         compiler_str = data["result"][0]["CompilerVersion"]
         enabled_flag = data["result"][0]["OptimizationUsed"]
         if enabled_flag not in ["true", "false"]:
@@ -1513,8 +1552,8 @@ class Contract(_DeployedContractBase):
                 )
             )
             input_json["settings"]["outputSelection"] = output_selection
-            print("CASEA")
-            json.dump(input_json, open("./andro.json", "w"))
+            # print("CASEA")
+            # json.dump(input_json, open("./andro.json", "w"))
             output_json = compiler.compile_from_input_json(input_json)
             return output_json
         else:
@@ -1530,7 +1569,7 @@ class Contract(_DeployedContractBase):
                 sources = {path_str: source_str}
 
             json.dump(sources, open("./andro.json", "w"))
-            print("CASEB")
+            # print("CASEB")
             return compiler.compile_and_format(
                 sources,
                 solc_version=str(version),
