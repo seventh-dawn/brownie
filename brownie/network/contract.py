@@ -1223,7 +1223,6 @@ class Contract(_DeployedContractBase):
     ):
         address = _resolve_address(address)
         data = _fetch_from_explorer(address, "getsourcecode", silent)
-        json.dump(data, open("t.json", "w"))
         is_verified = bool(data["result"][0].get("SourceCode"))
 
         if is_verified:
@@ -1334,7 +1333,6 @@ class Contract(_DeployedContractBase):
         """
         address = _resolve_address(address)
         data = _fetch_from_explorer(address, "getsourcecode", silent)
-        json.dump(data, open("j.json", "w"))
         is_verified = bool(data["result"][0].get("SourceCode"))
 
         if is_verified:
@@ -1463,8 +1461,6 @@ class Contract(_DeployedContractBase):
     def get_sources_and_build_from_data(cls, data, name, version):
         # print(version)
         data = normalize_data_from_etherscan(data)
-        with open(name + ".json", "w") as f:
-            json.dump(data, f)
         compiler_str = data["result"][0]["CompilerVersion"]
         optimizer = {
             "enabled": bool(int(data["result"][0]["OptimizationUsed"])),
@@ -1475,9 +1471,6 @@ class Contract(_DeployedContractBase):
             evm_version = "istanbul"
 
         source_str = "\n".join(data["result"][0]["SourceCode"].splitlines())
-        name_str = f"name_{int(time.time())}.json"
-        with open(name_str, "w") as f:
-            f.write(source_str)
         if source_str.startswith("{{"):
             # source was verified using compiler standard JSON
             input_json = json.loads(source_str[1:-1])
@@ -1526,7 +1519,6 @@ class Contract(_DeployedContractBase):
 
         import json
 
-        json.dump(data, open("./test.json", "w"))
         result = data["result"][0]
         optimizer = {
             "enabled": bool(enabled_flag),
@@ -1568,7 +1560,6 @@ class Contract(_DeployedContractBase):
                     path_str = f"{name}-flattened.sol"
                 sources = {path_str: source_str}
 
-            json.dump(sources, open("./andro.json", "w"))
             # print("CASEB")
             return compiler.compile_and_format(
                 sources,
