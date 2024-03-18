@@ -34,4 +34,5 @@ __all__ = [
     "Fixed",
     "Wei",
     "config",
+    "interface"
 ]

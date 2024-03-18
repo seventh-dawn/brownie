@@ -47,12 +47,23 @@ rpc = Rpc()
 eth_account.Account.enable_unaudited_hdwallet_features()
 _marker = deque("-/|\\-/|\\")
 
+
 def is_test_context():
     return "PYTEST_CURRENT_TEST" in os.environ
+
+
 def is_auto_publish():
-    return os.environ.get('AUTO_PUBLISH', None) == 'True'
+    return os.environ.get("AUTO_PUBLISH", None) == "True"
+
+
 def is_mainnet():
-    return 'main' in CONFIG.active_network['name'].lower()
+    return "main" in CONFIG.active_network["name"].lower()
+
+
+def is_fork():
+    return "fork" in CONFIG.active_network["name"].lower()
+
+
 class Accounts(metaclass=_Singleton):
     """
     List-like container that holds all available `Account` objects.
@@ -573,7 +584,7 @@ class _PrivateKeyAccount(PublicKeyAccount):
 
         add_thread.join()
         if is_auto_publish():
-            publish_source = (not is_test_context()) and is_mainnet()
+            publish_source = (not is_test_context()) and is_mainnet() and not is_fork()
         try:
             deployed_contract = contract.at(receipt.contract_address)
             if publish_source:

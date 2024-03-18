@@ -3,6 +3,7 @@
 import logging
 from collections import deque
 from hashlib import sha1
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import solcast
@@ -25,6 +26,8 @@ sh.setFormatter(logging.Formatter("%(message)s"))
 solcx_logger.addHandler(sh)
 
 AVAILABLE_SOLC_VERSIONS = None
+_version_file = open(Path(__file__).parent/'solc_versions_list.txt', 'r')
+VERSIONS_WITH_PATCH_LIST = [version.replace('soljson-v', '').replace('.js', '').replace('\n', '') for version in _version_file.readlines()]
 
 EVM_VERSION_MAPPING = [
     ("istanbul", Version("0.5.13")),
@@ -32,6 +35,8 @@ EVM_VERSION_MAPPING = [
     ("byzantium", Version("0.4.0")),
 ]
 
+def get_version_full_name(version:str):
+    return [v for v in VERSIONS_WITH_PATCH_LIST if version in v][0]
 
 def get_version() -> Version:
     return solcx.get_solc_version(with_commit_hash=True)

@@ -1,12 +1,14 @@
 #!/usr/bin/python3
 
 import json
+import os
 from copy import deepcopy
 from hashlib import sha1
 from pathlib import Path
 from typing import Dict, Optional, Union
 
 import solcast
+from dotenv import dotenv_values, load_dotenv
 from eth_utils import remove_0x_prefix
 from semantic_version import Version
 
@@ -46,6 +48,37 @@ STANDARD_JSON: Dict = {
         "remappings": [],
     },
 }
+STANDARD_JSON_ALT: Dict = {
+    "language": None,
+    "sources": {},
+    "settings": {
+        "viaIR": True,
+        "outputSelection": {
+            "*": {
+                "*": [
+                    "abi",
+                    "devdoc",
+                    "evm.bytecode",
+                    "evm.deployedBytecode",
+                    "userdoc",
+                    "storageLayout",
+                ],
+                "": ["ast"],
+            }
+        },
+        "evmVersion": None,
+        "remappings": [],
+    },
+}
+
+EVM_SOLC_VERSIONS = [
+    ("istanbul", Version("0.5.13")),
+    ("petersburg", Version("0.5.5")),
+    ("byzantium", Version("0.4.0")),
+]
+
+load_dotenv(".env")
+use_ir = os.environ.get("USE_IR", "").upper() == "TRUE"
 
 
 def compile_and_format(
@@ -200,7 +233,7 @@ def generate_input_json(
             i[0] for i in _module.EVM_VERSION_MAPPING if _module.get_version() >= i[1]
         )
 
-    input_json: Dict = deepcopy(STANDARD_JSON)
+    input_json: Dict = deepcopy(STANDARD_JSON if not use_ir else STANDARD_JSON_ALT)
     input_json["language"] = language
     input_json["settings"]["evmVersion"] = evm_version
     if language == "Solidity":

@@ -633,6 +633,10 @@ class TransactionReceipt:
                 "debug_traceTransaction",
                 (self.txid, {"disableStorage": CONFIG.mode != "console", "enableMemory": True}),
             )
+            if "error" in trace and "Invalid string length" in trace['error']['message']:
+                trace = web3.provider.make_request(  # type: ignore
+                    "debug_traceTransaction", (self.txid, {"disableStorage": CONFIG.mode != "console", "disableMemory":True})
+                )
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
             msg = f"Encountered a {type(e).__name__} while requesting "
             msg += "`debug_traceTransaction`. The local RPC client has likely crashed."
