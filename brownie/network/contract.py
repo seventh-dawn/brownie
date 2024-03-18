@@ -57,7 +57,7 @@ from brownie.exceptions import (
     VirtualMachineError,
 )
 from brownie.project import compiler, ethpm
-from brownie.project.compiler.solidity import SOLIDITY_ERROR_CODES
+from brownie.project.compiler.solidity import SOLIDITY_ERROR_CODES, get_version_full_name
 from brownie.project.flattener import Flattener
 from brownie.typing import AccountsType, TransactionReceiptType
 from brownie.utils import color
@@ -86,12 +86,13 @@ _explorer_tokens = {
     "snowtrace": "SNOWTRACE_TOKEN",
     "aurorascan": "AURORASCAN_TOKEN",
     "moonscan": "MOONSCAN_TOKEN",
+    "andromeda": "ANDROMEDA_TOKEN",
 }
 
 BATCHES_CACHE = {}
 IS_BATCH_CONTEXT_OPEN = False
 BATCH_CONTEXT_NAME = None
-BATCH_BASE_PATH = os.environ.get('BATCH_WRITE_PATH', './')
+BATCH_BASE_PATH = os.environ.get("BATCH_WRITE_PATH", "./")
 
 address_T = type(str)
 bytes_T = type(str)
@@ -100,24 +101,50 @@ skeletton = {
     "version": "1.0",
     "chainId": "43114",
     "createdAt": 1669047823034,
-    "meta": {
-        "name": "",
-        "description": "",
-        "txBuilderVersion": "1.11.1",
-        "createdFromSafeAddress": "",
-        "createdFromOwnerAddress": "",
-        "checksum": "0x76b292588001ecf2b53f7d881688f661609be9905061393b250ae1bd61debede"
-    }
+    "meta": {},
 }
 
 
-def wrap_all_tx(tx_in_order):
+def normalize_data_from_etherscan(data):
+    assert "result" in data, "data contains no result"
+    result = data["result"][0]
+
+    try:
+        source_code = json.loads(result["SourceCode"])
+    except json.JSONDecodeError:
+        return data
+    # print(source_code.keys())
+    if "sources" in source_code:
+        source_code.update(source_code["sources"])
+        del source_code["sources"]
+        # print(source_code.keys())
+
+    to_delete = []
+    for key, value in source_code.items():
+        if "content" not in value:
+            result[key] = value
+            to_delete.append(key)
+        # else:
+        #     print(key)
+    for key in to_delete:
+        del source_code[key]
+    source_code_str = json.dumps(source_code)
+    result["SourceCode"] = source_code_str
+    data["result"][0] = result
+
+    return data
+
+
+def wrap_all_tx(tx_in_order, chain_id=43114):
     batch = deepcopy(skeletton)
-    batch['transactions'] = [tx[0].dict() for tx in tx_in_order]
+    batch["chainId"] = str(chain_id)
+    batch["transactions"] = [tx[0].dict() for tx in tx_in_order]
     return batch
 
+
 def get_arg_names_from_func_abi(func_abi):
-    return [row["name"] for row in func_abi['inputs']]
+    return [row["name"] for row in func_abi["inputs"]]
+
 
 def generate_call_data_from_func_abi(func_abi, to, *args, data=None, value="0"):
     value = str(value)
@@ -133,6 +160,7 @@ def generate_call_data_from_func_abi(func_abi, to, *args, data=None, value="0"):
     arguments = dict(zip(args_names, [str(arg) for arg in args]))
     return TxInfo(to, func_abi, arguments, data, value)
 
+
 @dataclass
 class TxInfo:
     to: address_T
@@ -143,6 +171,7 @@ class TxInfo:
 
     def dict(self):
         return {k: v for k, v in asdict(self).items()}
+
 
 @contextmanager
 def batch_creation(path=None):
@@ -157,21 +186,29 @@ def batch_creation(path=None):
     previous_state_for_context_usage = IS_BATCH_CONTEXT_OPEN
     IS_BATCH_CONTEXT_OPEN = True
     yield
-    
-    with open(path, 'w') as f:
-        json.dump(wrap_all_tx(BATCHES_CACHE[path]), f)
-    
+    misformatted_parameters = re.compile("'([0-9a-fA-Fx]*)'")
+    misformatted_tuple = re.compile(r'''"\(([a-zA-Z0-9 \n,\\"]*)\)"''')
+
+    with open(path, "w") as f:
+        json.dump(wrap_all_tx(BATCHES_CACHE[path], chain.id), f)
+    with open(path, "r") as f:
+        txt = f.read()
+    txt = misformatted_parameters.sub(r"\"\1\"", txt)
+    txt = misformatted_tuple.sub('''"[\1]"''', txt)
+    with open(path, "w") as f:
+        f.write(txt)
+
     del BATCHES_CACHE[path]
     IS_BATCH_CONTEXT_OPEN = previous_state_for_context_usage
     BATCH_CONTEXT_NAME = previous_context_name
+
 
 def get_current_batch_context_name():
     global BATCH_CONTEXT_NAME
     return BATCH_CONTEXT_NAME
 
-    
-class _ContractBase:
 
+class _ContractBase:
     _dir_color = "bright magenta"
 
     def __init__(self, project: Any, build: Dict, sources: Dict) -> None:
@@ -426,9 +463,10 @@ class ContractContainer(_ContractBase):
                 f"Publishing source is only supported on {', '.join(_explorer_tokens)},"
                 "change the Explorer API"
             )
-
         if os.getenv(env_token):
             api_key = os.getenv(env_token)
+        elif "andromeda" in url:
+            api_key = "NO_TOKEN"
         else:
             host = urlparse(url).netloc
             host = host[host.index(".") + 1 :]
@@ -472,6 +510,7 @@ class ContractContainer(_ContractBase):
         elif "apache" in identifier and "2.0" in identifier:
             license_code = 12
 
+        is_andromeda = "andromeda" in url
         # get constructor arguments
         params_tx: Dict = {
             "apikey": api_key,
@@ -480,56 +519,77 @@ class ContractContainer(_ContractBase):
             "address": address,
             "page": 1,
             "sort": "asc",
-            "offset": 1,
+            "offset": 1 if not is_andromeda else 0,
         }
         i = 0
         while True:
             response = requests.get(url, params=params_tx, headers=REQUEST_HEADERS)
             if response.status_code != 200:
+                print("ERROR STATUS")
                 raise ConnectionError(
                     f"Status {response.status_code} when querying {url}: {response.text}"
                 )
             data = response.json()
-            if int(data["status"]) == 1:
+            if int(data["status"]) == 1 and data["result"]:
                 # Constructor arguments received
                 break
             else:
                 # Wait for contract to be recognized by etherscan
                 # This takes a few seconds after the contract is deployed
-                # After 10 loops we throw with the API result message (includes address)
-                if i >= 10:
+                # After 20 loops we throw with the API result message (includes address)
+                if i >= 20:
                     raise ValueError(f"API request failed with: {data['result']}")
                 elif i == 0 and not silent:
                     print(f"Waiting for {url} to process contract...")
                 i += 1
-                time.sleep(10)
+                time.sleep(5)
 
-        if data["message"] == "OK":
+        if data["message"] == "OK" and data["result"]:
             constructor_arguments = data["result"][0]["input"][contract_info["bytecode_len"] + 2 :]
         else:
             constructor_arguments = ""
 
+        if is_andromeda:
+            standard_input_json = self.get_verification_info()["standard_json_input"]
+            verify_andromeda_contract(
+                standard_input_json,
+                # f"{self._flattener.contract_file}:{self._flattener.contract_name}",
+                self._name,
+                address,
+                contract_info
+                # CONFIG.compiler.
+                # f"v{contract_info['compiler_version']}",
+            )
+            return True
         # Submit verification
         payload_verification: Dict = {
             "apikey": api_key,
             "module": "contract",
             "action": "verifysourcecode",
             "contractaddress": address,
-            "sourceCode": io.StringIO(json.dumps(flatten_libraries_for_file(self._flattener.standard_input_json))),
+            "sourceCode": io.StringIO(
+                json.dumps(flatten_libraries_for_file(self._flattener.standard_input_json))
+            ),
             "codeformat": "solidity-standard-json-input",
             "contractname": f"{self._flattener.contract_file}:{self._flattener.contract_name}",
             "compilerversion": f"v{contract_info['compiler_version']}",
             "optimizationUsed": 1 if contract_info["optimizer_enabled"] else 0,
             "runs": contract_info["optimizer_runs"],
             "constructorArguements": constructor_arguments,
-            "licenseType": license_code
+            "licenseType": license_code,
         }
+
+        # if "andromeda" in url:
+        #     payload_verification['compilerversion'] = 'v'+get_version_full_name(
+        #         CONFIG.settings['compiler']['solc']['version']
+        #     )
         response = requests.post(url, data=payload_verification, headers=REQUEST_HEADERS)
         if response.status_code != 200:
             raise ConnectionError(
                 f"Status {response.status_code} when querying {url}: {response.text}"
             )
         data = response.json()
+
         if int(data["status"]) != 1:
             raise ValueError(f"Failed to submit verification request: {data['result']}")
 
@@ -556,10 +616,15 @@ class ContractContainer(_ContractBase):
                     print("Verification pending...")
             else:
                 if not silent:
-                    col = "bright green" if data["message"] == "OK" else "bright red"
+                    col = (
+                        "bright green"
+                        if (data["message"] == "OK" and "Fail" not in data["result"])
+                        else "bright red"
+                    )
                     print(f"Verification complete. Result: {color(col)}{data['result']}{color}")
                 return data["message"] == "OK"
             time.sleep(10)
+
     def _slice_source(self, source: str, offset: list) -> str:
         """Slice the source of the contract, preserving any comments above the first line."""
         offset_start = offset[0]
@@ -585,38 +650,40 @@ class ContractContainer(_ContractBase):
         offset_start = max(0, offset_start)
         return source[offset_start : offset[1]].strip()
 
+
 def get_stripped_library(name, sources):
-    library_source = sources[name]['content'].split('\n')
+    library_source = sources[name]["content"].split("\n")
     lines = []
     for line in library_source:
-        if 'pragma' in line:
+        if "pragma" in line:
             continue
-        if 'license' in line.lower():
+        if "license" in line.lower():
             continue
         lines.append(line)
-    return '\n'.join(lines)
+    return "\n".join(lines)
+
 
 def flatten_libraries_for_file(data):
-    sources = data['sources']
-    libraries = data['settings']['libraries']
+    sources = data["sources"]
+    libraries = data["settings"]["libraries"]
     files_requiring_libraries = list(libraries.keys())
     file_to_flatten = files_requiring_libraries[0]
-    libraries_files = [name.replace('.sol', '') + '.sol' for name in libraries[file_to_flatten]]
+    libraries_files = [name.replace(".sol", "") + ".sol" for name in libraries[file_to_flatten]]
     processed_lines = []
-    contract_source = sources[file_to_flatten]['content'].split('\n')
+    contract_source = sources[file_to_flatten]["content"].split("\n")
     for _, line in enumerate(contract_source):
-        if 'import' in line and any(file_name in line for file_name in libraries_files):
+        if "import" in line and any(file_name in line for file_name in libraries_files):
             file_name = [name for name in libraries_files if name in line][0]
             line = get_stripped_library(file_name, sources)
         processed_lines.append(line)
-    new_source = '\n'.join(processed_lines)
-    data['sources'][file_to_flatten] = {'content': new_source}
+    new_source = "\n".join(processed_lines)
+    data["sources"][file_to_flatten] = {"content": new_source}
     for library_name in libraries_files:
-        data['sources'].pop(library_name)
+        data["sources"].pop(library_name)
     return data
 
-class ContractConstructor:
 
+class ContractConstructor:
     _dir_color = "bright magenta"
 
     def __init__(self, parent: "ContractContainer", name: str) -> None:
@@ -960,7 +1027,11 @@ class Contract(_DeployedContractBase):
     """
 
     def __init__(
-        self, address_or_alias: str, *args: Any, owner: Optional[AccountsType] = None, **kwargs: Any
+        self,
+        address_or_alias: str,
+        *args: Any,
+        owner: Optional[AccountsType] = None,
+        **kwargs: Any,
     ) -> None:
         """
         Recreate a `Contract` object from the local database.
@@ -1202,18 +1273,19 @@ class Contract(_DeployedContractBase):
         # if this is a proxy, fetch information for the implementation contract
         if as_proxy_for is not None:
             return cls.storage_from_explorer(
-            as_proxy_for,
-            None,
-            owner,
-            silent,
-            persist,
-        )
+                as_proxy_for,
+                None,
+                owner,
+                silent,
+                persist,
+            )
 
         if not is_verified:
             return cls.from_abi(name, address, abi, owner)
 
         compiler_str = cls.get_compiler_str_from_data(data)
         version, is_compilable = cls.get_version_infos_from_compiler_str(address, compiler_str)
+        print(version, is_compilable)
 
         if not is_compilable:
             if not silent:
@@ -1222,7 +1294,7 @@ class Contract(_DeployedContractBase):
                     "supported by Brownie. Some debugging functionality will not be available.",
                     BrownieCompilerWarning,
                 )
-            return cls.from_abi(name, address, abi, owner)
+            return cls.get_layout_from_data(data, name, version)
         elif data["result"][0]["OptimizationUsed"] in ("true", "false"):
             if not silent:
                 warnings.warn(
@@ -1230,10 +1302,9 @@ class Contract(_DeployedContractBase):
                     "Some debugging functionality will not be available.",
                     BrownieCompilerWarning,
                 )
-            return cls.from_abi(name, address, abi, owner)
+            return cls.get_layout_from_data(data, name, version)
 
         return cls.get_layout_from_data(data, name, version)
-
 
     @classmethod
     def from_explorer(
@@ -1339,6 +1410,7 @@ class Contract(_DeployedContractBase):
 
         sources, build_json = cls.get_sources_and_build_from_data(data, name, version)
 
+        # print(build_json.keys())
         build_json = build_json[name]
         if as_proxy_for is not None:
             build_json.update(abi=abi, natspec=implementation_contract._build.get("natspec"))
@@ -1383,18 +1455,20 @@ class Contract(_DeployedContractBase):
                 )
             except Exception:
                 is_compilable = False
-        return version,is_compilable
+        return version, is_compilable
 
     @classmethod
     def get_sources_and_build_from_data(cls, data, name, version):
+        # print(version)
+        data = normalize_data_from_etherscan(data)
         compiler_str = data["result"][0]["CompilerVersion"]
         optimizer = {
             "enabled": bool(int(data["result"][0]["OptimizationUsed"])),
             "runs": int(data["result"][0]["Runs"]),
         }
         evm_version = data["result"][0].get("EVMVersion", "Default")
-        if evm_version == "Default":
-            evm_version = None
+        if evm_version in ["Default", ""]:
+            evm_version = "istanbul"
 
         source_str = "\n".join(data["result"][0]["SourceCode"].splitlines())
         if source_str.startswith("{{"):
@@ -1415,7 +1489,9 @@ class Contract(_DeployedContractBase):
         else:
             if source_str.startswith("{"):
                 # source was submitted as multiple files
-                sources = {k: v["content"] for k, v in json.loads(source_str).items()}
+                sources = {
+                    k: v["content"] for k, v in json.loads(source_str).items() if "content" in v
+                }
             else:
                 # source was submitted as a single file
                 if compiler_str.startswith("vyper"):
@@ -1431,31 +1507,29 @@ class Contract(_DeployedContractBase):
                 optimizer=optimizer,
                 evm_version=evm_version,
             )
-            
-        return sources,build_json
+
+        return sources, build_json
 
     @classmethod
     def get_layout_from_data(cls, data, name, version):
         compiler_str = data["result"][0]["CompilerVersion"]
+        enabled_flag = data["result"][0]["OptimizationUsed"]
+        if enabled_flag not in ["true", "false"]:
+            enabled_flag = int(enabled_flag)
+
+        import json
+
+        result = data["result"][0]
         optimizer = {
-            "enabled": bool(int(data["result"][0]["OptimizationUsed"])),
-            "runs": int(data["result"][0]["Runs"]),
+            "enabled": bool(enabled_flag),
+            "runs": int(result.get("Runs") or result.get("OptimizationRuns")),
         }
         evm_version = data["result"][0].get("EVMVersion", "Default")
-        if evm_version == "Default":
+        if str(evm_version).upper() == "Default".upper():
             evm_version = None
 
         source_str = "\n".join(data["result"][0]["SourceCode"].splitlines())
-        output_selection = {
-            "*": {
-                "*": [
-                    "storageLayout"
-                ],
-                "": [
-                    "ast"
-                ]
-            }
-        }
+        output_selection = {"*": {"*": ["storageLayout"], "": ["ast"]}}
         if source_str.startswith("{{"):
             # source was verified using compiler standard JSON
             input_json = json.loads(source_str[1:-1])
@@ -1465,9 +1539,13 @@ class Contract(_DeployedContractBase):
 
             compiler.set_solc_version(str(version))
             input_json.update(
-                compiler.generate_input_json(sources, optimizer=optimizer, evm_version=evm_version, remappings=remappings)
+                compiler.generate_input_json(
+                    sources, optimizer=optimizer, evm_version=evm_version, remappings=remappings
+                )
             )
-            input_json['settings']['outputSelection'] = output_selection
+            input_json["settings"]["outputSelection"] = output_selection
+            # print("CASEA")
+            # json.dump(input_json, open("./andro.json", "w"))
             output_json = compiler.compile_from_input_json(input_json)
             return output_json
         else:
@@ -1482,6 +1560,7 @@ class Contract(_DeployedContractBase):
                     path_str = f"{name}-flattened.sol"
                 sources = {path_str: source_str}
 
+            # print("CASEB")
             return compiler.compile_and_format(
                 sources,
                 solc_version=str(version),
@@ -1489,9 +1568,8 @@ class Contract(_DeployedContractBase):
                 optimizer=optimizer,
                 evm_version=evm_version,
                 output_selection=output_selection,
-                only_output=True
+                only_output=True,
             )
-            
 
     @classmethod
     def get_solc_version(cls, compiler_str: str, address: str) -> Version:
@@ -1898,7 +1976,6 @@ class OverloadedMethod:
 
 
 class _ContractMethod:
-
     _dir_color = "bright magenta"
 
     def __init__(
@@ -2019,10 +2096,13 @@ class _ContractMethod:
 
         if batch_path is not None:
             BATCHES_CACHE[batch_path].append(
-                (generate_call_data_from_func_abi(
-                    self.abi, str(self._address), *args, data=None, value=tx["value"]),
-                    tx['from'])
+                (
+                    generate_call_data_from_func_abi(
+                        self.abi, str(self._address), *args, data=None, value=tx["value"]
+                    ),
+                    tx["from"],
                 )
+            )
 
         return tx["from"].transfer(
             self._address,
@@ -2254,7 +2334,6 @@ def _get_tx(owner: Optional[AccountsType], args: Tuple) -> Tuple:
 def _get_method_object(
     address: str, abi: Dict, name: str, owner: Optional[AccountsType], natspec: Dict
 ) -> Union["ContractCall", "ContractTx"]:
-
     if "constant" in abi:
         constant = abi["constant"]
     else:
@@ -2376,9 +2455,25 @@ def _fetch_from_explorer(address: str, action: str, silent: bool) -> Dict:
     if response.status_code != 200:
         raise ConnectionError(f"Status {response.status_code} when querying {url}: {response.text}")
     data = response.json()
+    if "AdditionalSources" in data["result"][0]:
+        data = format_from_andromeda(data)
     if int(data["status"]) != 1:
         raise ValueError(f"Failed to retrieve data from API: {data}")
 
+    return data
+
+
+def format_from_andromeda(data):
+    result = data["result"][0]
+    sources = {result["FileName"]: {"content": result["SourceCode"]}}
+    for source in result.get("AdditionalSources", []):
+        sources[source["Filename"]] = {"content": source["SourceCode"]}
+    result["Proxy"] = result["IsProxy"]
+    result["Implementation"] = result.get("ImplementationAddress", "")
+    result["Runs"] = result["OptimizationRuns"]
+    result["SourceCode"] = json.dumps(sources)
+    result["OptimizationUsed"] = "1" if result["OptimizationUsed"] == "true" else "0"
+    data["result"][0] = result
     return data
 
 
@@ -2435,3 +2530,46 @@ def _comment_slicer(match: Match) -> str:
     else:
         # multi line comment without line break
         return " "
+
+
+def verify_andromeda_contract(standard_json, contract_name, contract_address, compiler_info):
+    base = "https://andromeda-explorer.metis.io/api"
+    check_verification_status = lambda x: requests.get(
+        base + f"?module=contract&action=checkverifystatus&guid={x}"
+    )
+    compiler_version = f"v{compiler_info.get('compiler_version')}"
+
+    runs = compiler_info.get("optimizer_runs", 0)
+    optimization_used = compiler_info.get("optimizer_enabled", 0)
+    payload_verification = {
+        "module": "contract",
+        "action": "verifysourcecode",
+        "contractaddress": contract_address,
+        "sourceCode": io.StringIO(json.dumps(standard_json)),
+        "codeformat": "solidity-standard-json-input",
+        "contractname": contract_name,
+        "compilerversion": compiler_version,
+        "optimizationUsed": bool(optimization_used),
+        "runs": runs,
+    }
+    print(payload_verification)
+    response = requests.post(base, data=payload_verification)
+    assert response.status_code == 200
+    guid = response.json()["result"]
+    print(f"Verification started with guid: {guid}")
+
+    time.sleep(5)
+    while True:
+        response = check_verification_status(guid)
+        assert response.status_code == 200
+        status = response.json()["result"]
+        if "Pass" in status:
+            print(f"Verification success")
+            break
+        elif "Pending" in status:
+            print(f"Verification pending")
+            time.sleep(5)
+        else:
+            print(f"Verification failed")
+            raise Exception("Verification failed")
+    return response

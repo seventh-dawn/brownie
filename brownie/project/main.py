@@ -112,7 +112,7 @@ class _ProjectBase:
         finally:
             os.chdir(cwd)
         is_alternative_compilation = os.environ.get('IS_ALTERNATIVE_COMPILATION', 'False') == 'True'
-        Path(self._build_path, 'contracts/_interfaces').mkdir(exist_ok=True)
+        Path(self._build_path or './', 'contracts/_interfaces').mkdir(exist_ok=True)
         for alias, data in build_json.items():
             if self._build_path is not None:
                 is_contract = not data["sourcePath"].startswith("interface")

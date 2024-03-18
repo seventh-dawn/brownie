@@ -1,11 +1,13 @@
 #!/usr/bin/python3
 
 import json
+import os
 from copy import deepcopy
 from hashlib import sha1
 from pathlib import Path
 from typing import Dict, Optional, Union
 
+from dotenv import dotenv_values, load_dotenv
 import solcast
 from eth_utils import remove_0x_prefix
 from semantic_version import Version
@@ -31,6 +33,21 @@ STANDARD_JSON: Dict = {
     "settings": {
         "outputSelection": {
             "*": {
+                "*": ["abi", "metadata", "devdoc", "evm.bytecode", "evm.deployedBytecode", "userdoc", "storageLayout"],
+                "": ["ast"],
+            }
+        },
+        "evmVersion": None,
+        "remappings": [],
+    },
+}
+STANDARD_JSON_ALT: Dict = {
+    "language": None,
+    "sources": {},
+    "settings": {
+        "viaIR": True,
+        "outputSelection": {
+            "*": {
                 "*": ["abi", "devdoc", "evm.bytecode", "evm.deployedBytecode", "userdoc", "storageLayout"],
                 "": ["ast"],
             }
@@ -39,12 +56,15 @@ STANDARD_JSON: Dict = {
         "remappings": [],
     },
 }
+
 EVM_SOLC_VERSIONS = [
     ("istanbul", Version("0.5.13")),
     ("petersburg", Version("0.5.5")),
     ("byzantium", Version("0.4.0")),
 ]
 
+load_dotenv('.env')
+use_ir = os.environ.get('USE_IR', '').upper() == 'TRUE'
 
 def compile_and_format(
     contract_sources: Dict[str, str],
@@ -164,7 +184,7 @@ def generate_input_json(
     interface_sources: Optional[Dict[str, str]] = None,
     remappings: Optional[list] = None,
     optimizer: Optional[Dict] = None,
-    get_storage_layout: bool = False
+    get_storage_layout: bool = False,
 ) -> Dict:
 
     """Formats contracts to the standard solc input json.
@@ -194,7 +214,7 @@ def generate_input_json(
         else:
             evm_version = "istanbul"
 
-    input_json: Dict = deepcopy(STANDARD_JSON)
+    input_json: Dict = deepcopy(STANDARD_JSON if not use_ir else STANDARD_JSON_ALT)
     input_json["language"] = language
     input_json["settings"]["evmVersion"] = evm_version
     if language == "Solidity":

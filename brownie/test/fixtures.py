@@ -39,6 +39,18 @@ class PytestBrownieFixtures:
         if not CONFIG.argv["interrupt"]:
             brownie.chain.reset()
 
+    @pytest.fixture(scope="package")
+    def package_isolation(self):
+        """
+        Resets the test environment before and after a test module runs. This ensures
+        a clean environment for the module, and that it's results will not affect
+        subsequent tests.
+        """
+        brownie.chain.reset()
+        yield
+        if not CONFIG.argv["interrupt"]:
+            brownie.chain.reset()
+
     @pytest.fixture
     def fn_isolation(self, module_isolation):
         """
