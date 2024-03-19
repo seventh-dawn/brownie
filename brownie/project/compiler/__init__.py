@@ -7,8 +7,8 @@ from hashlib import sha1
 from pathlib import Path
 from typing import Dict, Optional, Union
 
-from dotenv import dotenv_values, load_dotenv
 import solcast
+from dotenv import dotenv_values, load_dotenv
 from eth_utils import remove_0x_prefix
 from semantic_version import Version
 
@@ -33,7 +33,14 @@ STANDARD_JSON: Dict = {
     "settings": {
         "outputSelection": {
             "*": {
-                "*": ["abi", "metadata", "devdoc", "evm.bytecode", "evm.deployedBytecode", "userdoc", "storageLayout"],
+                "*": [
+                    "abi",
+                    "devdoc",
+                    "evm.bytecode",
+                    "evm.deployedBytecode",
+                    "userdoc",
+                    "storageLayout",
+                ],
                 "": ["ast"],
             }
         },
@@ -48,7 +55,14 @@ STANDARD_JSON_ALT: Dict = {
         "viaIR": True,
         "outputSelection": {
             "*": {
-                "*": ["abi", "devdoc", "evm.bytecode", "evm.deployedBytecode", "userdoc", "storageLayout"],
+                "*": [
+                    "abi",
+                    "devdoc",
+                    "evm.bytecode",
+                    "evm.deployedBytecode",
+                    "userdoc",
+                    "storageLayout",
+                ],
                 "": ["ast"],
             }
         },
@@ -63,8 +77,9 @@ EVM_SOLC_VERSIONS = [
     ("byzantium", Version("0.4.0")),
 ]
 
-load_dotenv('.env')
-use_ir = os.environ.get('USE_IR', '').upper() == 'TRUE'
+load_dotenv(".env")
+use_ir = os.environ.get("USE_IR", "").upper() == "TRUE"
+
 
 def compile_and_format(
     contract_sources: Dict[str, str],
@@ -78,6 +93,7 @@ def compile_and_format(
     interface_sources: Optional[Dict[str, str]] = None,
     remappings: Optional[list] = None,
     optimizer: Optional[Dict] = None,
+    viaIR: Optional[bool] = None,
     output_selection: Optional[Dict] = None,
     only_output: bool = False,
 ) -> Dict:
@@ -94,6 +110,7 @@ def compile_and_format(
         interface_sources: dictionary of interfaces as {'path': "source code"}
         remappings: list of solidity path remappings
         optimizer: dictionary of solidity optimizer settings
+        viaIR: enable compilation pipeline to go through the Yul intermediate representation
 
     Returns:
         build data dict
@@ -159,10 +176,11 @@ def compile_and_format(
             interface_sources=interfaces,
             remappings=remappings,
             optimizer=optimizer,
+            viaIR=viaIR,
         )
 
         if output_selection is not None:
-            input_json['settings']['outputSelection'] = output_selection
+            input_json["settings"]["outputSelection"] = output_selection
 
         output_json = compile_from_input_json(input_json, silent, allow_paths)
         all_outputs_json.update(output_json)
@@ -184,9 +202,9 @@ def generate_input_json(
     interface_sources: Optional[Dict[str, str]] = None,
     remappings: Optional[list] = None,
     optimizer: Optional[Dict] = None,
+    viaIR: Optional[bool] = None,
     get_storage_layout: bool = False,
 ) -> Dict:
-
     """Formats contracts to the standard solc input json.
 
     Args:
@@ -198,6 +216,7 @@ def generate_input_json(
         interface_sources: dictionary of interfaces as {'path': "source code"}
         remappings: list of solidity path remappings
         optimizer: dictionary of solidity optimizer settings
+        viaIR: enable compilation pipeline to go through the Yul intermediate representation
 
     Returns: dict
     """
@@ -209,10 +228,10 @@ def generate_input_json(
         optimizer = {"enabled": optimize, "runs": runs if optimize else 0}
 
     if evm_version is None:
-        if language == "Solidity":
-            evm_version = next(i[0] for i in EVM_SOLC_VERSIONS if solidity.get_version() >= i[1])
-        else:
-            evm_version = "istanbul"
+        _module = solidity if language == "Solidity" else vyper
+        evm_version = next(
+            i[0] for i in _module.EVM_VERSION_MAPPING if _module.get_version() >= i[1]
+        )
 
     input_json: Dict = deepcopy(STANDARD_JSON if not use_ir else STANDARD_JSON_ALT)
     input_json["language"] = language
@@ -220,11 +239,13 @@ def generate_input_json(
     if language == "Solidity":
         input_json["settings"]["optimizer"] = optimizer
         input_json["settings"]["remappings"] = _get_solc_remappings(remappings)
+        if viaIR is not None:
+            input_json["settings"]["viaIR"] = viaIR
     input_json["sources"] = _sources_dict(contract_sources, language)
 
     if get_storage_layout:
         output_selection = input_json["settings"]["outputSelection"]
-        output_selection['*']['*'] += "storageLayout"
+        output_selection["*"]["*"] += "storageLayout"
         input_json["settings"]["outputSelection"] = output_selection
 
     if interface_sources:
@@ -251,7 +272,7 @@ def _get_solc_remappings(remappings: Optional[list]) -> list:
             remapped_dict[key] = path.parent.joinpath(remap_dict.pop(key)).as_posix()
         else:
             remapped_dict[path.name] = path.as_posix()
-    for (k, v) in remap_dict.items():
+    for k, v in remap_dict.items():
         if packages.joinpath(v).exists():
             remapped_dict[k] = packages.joinpath(v).as_posix()
 
@@ -273,7 +294,6 @@ def _get_allow_paths(allow_paths: Optional[str], remappings: list) -> str:
 def compile_from_input_json(
     input_json: Dict, silent: bool = True, allow_paths: Optional[str] = None
 ) -> Dict:
-
     """
     Compiles contracts from a standard input json.
 
