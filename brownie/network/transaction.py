@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 import functools
+import json
 import re
 import sys
 import threading
@@ -82,7 +83,6 @@ class Status(IntEnum):
 
 
 class TransactionReceipt:
-
     """Attributes and methods relating to a broadcasted transaction.
 
     * All ether values are given as integers denominated in wei.
@@ -633,9 +633,13 @@ class TransactionReceipt:
             trace = web3.provider.make_request(  # type: ignore
                 "debug_traceTransaction", (self.txid, {"disableStorage": CONFIG.mode != "console"})
             )
-            if "error" in trace and "Invalid string length" in trace['error']['message']:
+            if "error" in trace and "Invalid string length" in trace["error"]["message"]:
                 trace = web3.provider.make_request(  # type: ignore
-                    "debug_traceTransaction", (self.txid, {"disableStorage": CONFIG.mode != "console", "disableMemory":True})
+                    "debug_traceTransaction",
+                    (
+                        self.txid,
+                        {"disableStorage": CONFIG.mode != "console", "disableMemory": True},
+                    ),
                 )
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
             msg = f"Encountered a {type(e).__name__} while requesting "
@@ -712,6 +716,7 @@ class TransactionReceipt:
             return
 
         # iterate over revert instructions in reverse to find revert message
+        json.dump(trace, open("test.json", "w"))
         for step in (i for i in trace[::-1] if i["op"] in ("REVERT", "INVALID")):
             if step["op"] == "REVERT" and int(step["stack"][-2], 16):
                 # get returned error string from stack
@@ -853,6 +858,7 @@ class TransactionReceipt:
         coverage_eval: Dict = {last_map[0]["name"]: {}}
         precompile_contract = re.compile(r"0x0{38}(?:0[1-9]|1[0-8])")
         call_opcodes = ("CALL", "STATICCALL", "DELEGATECALL")
+        json.dump(trace, open("test.json", "w"))
         for i in range(len(trace)):
             # if depth has increased, tx has called into a different contract
             is_depth_increase = trace[i]["depth"] > trace[i - 1]["depth"]
@@ -873,8 +879,12 @@ class TransactionReceipt:
                     stack_idx = -4 if step["op"] in ("CALL", "CALLCODE") else -3
                     offset = int(step["stack"][stack_idx], 16)
                     length = int(step["stack"][stack_idx - 1], 16)
-                    calldata = HexBytes("".join(step["memory"]))[offset : offset + length]
-                    sig = calldata[:4].hex()
+                    if "memory" in step:
+                        calldata = HexBytes("".join(step["memory"]))[offset : offset + length]
+                        sig = calldata[:4].hex()
+                    else:
+                        calldata = ""
+                        sig = f"<{step['op']}>"
                     address = step["stack"][-2][-40:]
 
                 if is_depth_increase:

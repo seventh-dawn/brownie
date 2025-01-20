@@ -87,6 +87,7 @@ _explorer_tokens = {
     "aurorascan": "AURORASCAN_TOKEN",
     "moonscan": "MOONSCAN_TOKEN",
     "andromeda": "ANDROMEDA_TOKEN",
+    "sonic": "SONIC_TOKEN",
 }
 
 BATCHES_CACHE = {}
@@ -103,6 +104,21 @@ skeletton = {
     "createdAt": 1669047823034,
     "meta": {},
 }
+
+
+def add_libraries(data):
+    sources = data["sources"]
+    libraries = data["settings"]["libraries"]
+    print(libraries)
+    files_requiring_libraries = list(libraries.keys())
+    file_to_flatten = files_requiring_libraries[0]
+    main_file_libraries = libraries[file_to_flatten]
+    if not main_file_libraries:
+        return data
+    for source_name in sources:
+        libraries[source_name] = main_file_libraries
+    data["settings"]["libraries"] = libraries
+    return data
 
 
 def normalize_data_from_etherscan(data):
@@ -284,7 +300,6 @@ class _ContractBase:
 
 
 class ContractContainer(_ContractBase):
-
     """List-like container class that holds all Contract instances of the same
     type, and is used to deploy new instances of that contract.
 
@@ -439,7 +454,7 @@ class ContractContainer(_ContractBase):
             build_json = self._build
 
             return {
-                "standard_json_input": self._flattener.standard_input_json,
+                "standard_json_input": add_libraries(self._flattener.standard_input_json),
                 "contract_name": build_json["contractName"],
                 "compiler_version": build_json["compiler"]["version"],
                 "optimizer_enabled": build_json["compiler"]["optimizer"]["enabled"],
@@ -450,7 +465,9 @@ class ContractContainer(_ContractBase):
         else:
             raise TypeError(f"Unsupported language for source verification: {language}")
 
-    def publish_source(self, contract: Any, silent: bool = False) -> bool:
+    def publish_source(
+        self, contract: Any, silent: bool = False, deployed_by_contract: bool = False
+    ) -> bool:
         """Flatten contract and publish source on the selected explorer"""
 
         # Check required conditions for verifying
@@ -523,6 +540,9 @@ class ContractContainer(_ContractBase):
         }
         i = 0
         while True:
+            if deployed_by_contract:
+                time.sleep(10)
+                break
             response = requests.get(url, params=params_tx, headers=REQUEST_HEADERS)
             if response.status_code != 200:
                 print("ERROR STATUS")
@@ -556,19 +576,26 @@ class ContractContainer(_ContractBase):
                 # f"{self._flattener.contract_file}:{self._flattener.contract_name}",
                 self._name,
                 address,
-                contract_info
+                contract_info,
                 # CONFIG.compiler.
                 # f"v{contract_info['compiler_version']}",
             )
             return True
         # Submit verification
+        # print("HERE")
+        # print(self._flattener)
+
+        # json.dumps(flatten_libraries_for_file(self._flattener.standard_input_json)),
+        # print(data.getvalue())
+        print("DUMPED")
+
         payload_verification: Dict = {
             "apikey": api_key,
             "module": "contract",
             "action": "verifysourcecode",
             "contractaddress": address,
             "sourceCode": io.StringIO(
-                json.dumps(flatten_libraries_for_file(self._flattener.standard_input_json))
+                json.dumps(add_libraries(self._flattener.standard_input_json))
             ),
             "codeformat": "solidity-standard-json-input",
             "contractname": f"{self._flattener.contract_file}:{self._flattener.contract_name}",
@@ -1653,7 +1680,6 @@ class Contract(_DeployedContractBase):
 
 
 class ProjectContract(_DeployedContractBase):
-
     """Methods for interacting with a deployed contract as part of a Brownie project."""
 
     def __init__(
@@ -2235,7 +2261,6 @@ class ContractTx(_ContractMethod):
 
 
 class ContractCall(_ContractMethod):
-
     """
     A public view or pure contract method.
 
