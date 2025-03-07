@@ -716,7 +716,6 @@ class TransactionReceipt:
             return
 
         # iterate over revert instructions in reverse to find revert message
-        json.dump(trace, open("test.json", "w"))
         for step in (i for i in trace[::-1] if i["op"] in ("REVERT", "INVALID")):
             if step["op"] == "REVERT" and int(step["stack"][-2], 16):
                 # get returned error string from stack
@@ -858,7 +857,6 @@ class TransactionReceipt:
         coverage_eval: Dict = {last_map[0]["name"]: {}}
         precompile_contract = re.compile(r"0x0{38}(?:0[1-9]|1[0-8])")
         call_opcodes = ("CALL", "STATICCALL", "DELEGATECALL")
-        json.dump(trace, open("test.json", "w"))
         for i in range(len(trace)):
             # if depth has increased, tx has called into a different contract
             is_depth_increase = trace[i]["depth"] > trace[i - 1]["depth"]
