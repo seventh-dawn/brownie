@@ -211,6 +211,8 @@ def batch_creation(path=None):
         txt = f.read()
     txt = misformatted_parameters.sub(r"\"\1\"", txt)
     txt = misformatted_tuple.sub('''"[\1]"''', txt)
+    txt = re.sub(r"'(.*?)'", r'\\"\1"', txt)
+
     with open(path, "w") as f:
         f.write(txt)
 
