@@ -204,6 +204,7 @@ def batch_creation(path=None):
     yield
     misformatted_parameters = re.compile("'([0-9a-fA-Fx]*)'")
     misformatted_tuple = re.compile(r'''"\(([a-zA-Z0-9 \n,\\"]*)\)"''')
+    misformatted_strings = re.compile(r"'(.*?)'")
 
     with open(path, "w") as f:
         json.dump(wrap_all_tx(BATCHES_CACHE[path], chain.id), f)
@@ -211,7 +212,7 @@ def batch_creation(path=None):
         txt = f.read()
     txt = misformatted_parameters.sub(r"\"\1\"", txt)
     txt = misformatted_tuple.sub('''"[\1]"''', txt)
-    txt = re.sub(r"'(.*?)'", r'\\"\1"', txt)
+    txt = misformatted_strings.sub(r'\\"\1\\"', txt)
 
     with open(path, "w") as f:
         f.write(txt)
