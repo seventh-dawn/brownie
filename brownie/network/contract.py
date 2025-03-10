@@ -206,8 +206,8 @@ def batch_creation(path=None):
     misformatted_tuple = re.compile(r'''"\(([a-zA-Z0-9 \n,\\"]*)\)"''')
     misformatted_strings = re.compile(r"'(.*?)'")
     misformatted_spaces = re.compile(r", ")
-    misformatted_bool1 = re.compile(r",True ")
-    misformatted_bool2 = re.compile(r",False ")
+misformatted_bool1 = re.compile(r",True")
+misformatted_bool2 = re.compile(r",False")
 
     with open(path, "w") as f:
         json.dump(wrap_all_tx(BATCHES_CACHE[path], chain.id), f)
